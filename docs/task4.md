@@ -1,8 +1,8 @@
-# Agent 페르소나 및 시스템 설계
+# 상세 설계 및 개발 환경 구축
 
-task2(문제 정의)와 task3(시나리오)에서 확정한 목표·흐름을 Agent 구조, 도구, 상태, 프롬프트 수준으로 구체화한 문서입니다.
+task2(문제 정의)와 task3(시나리오)에서 확정한 목표·흐름을 Agent 구조, 도구, 상태, 프롬프트 수준으로 구체화하고(1~8장), 바로 개발을 시작할 수 있는 실행 환경과 절차를 정리한 문서입니다(9장).
 
-### 기준 수치 (task2·task3와 동일)
+### 기준 수치 (task2·task3와 동일, 구현·테스트의 공식 기준표)
 
 | 항목 | 기준 | 근거 |
 |------|------|------|
@@ -10,9 +10,13 @@ task2(문제 정의)와 task3(시나리오)에서 확정한 목표·흐름을 Ag
 | 추천 정확도 | 상위 3건 중 '추천' 라벨 공고 1건 이상 포함 비율 90% 이상 | task2 KPI 목표 |
 | 초안 커버율 | 공고 필수 항목 반영률 80% 이상 | task2 KPI 목표 |
 | 초안 근거성 | 기업 프로필에 없는 사실 기재 0건 | task2 KPI 목표 |
+| 담당자 만족도 | 5점 척도 평균 3.5점 이상 (SC-001/SC-002 통합 측정) | 팀 설정, task3 KPI 측정 종합표 |
+| 초안 재사용성 | A+B 분류 비율 80% 이상 (초안 10건) | 팀 설정, task3 KPI 측정 종합표 |
 | 정답셋 | IT 용역 공고 30건 × 가상 기업 10개사 = 300조합, 3단계 라벨(부적격 / 적격-비추천 / 추천) (초기 5개사로 시작) | 8주 안에 수작업 라벨링 가능한 규모, 라벨 기준은 task2 '적합 공고 정의' |
 | 커버율 측정 대상 | 초안 30건 (공고별 추천 1순위 기업) | task3 KPI 1 |
 | PoC 기간 | 8주 (하루 1~2시간) | 프로젝트 조건 |
+
+KPI별 측정 방법과 평가 주체(자동/사람)는 task3 'KPI 측정 종합표'를 따릅니다. 시간·처리량은 추정치를 쓰지 않고 Phase 4 실측으로 확정합니다.
 
 ---
 
@@ -182,10 +186,10 @@ task3 부록 F의 모듈 매핑과 이름을 맞췄습니다.
 
 | 도구명 | 기능 설명 | 입력 | 출력 | 연결 모듈 |
 |-------|---------|-----|------|---------|
-| `filter_tenders` | 필수 자격·예산·지역 조건 필터링 | `company, tenders, filters` | `List[tender_id]`, 제외 사유 | FilterModule |
+| `filter_tenders` | 예산·지역 선호 조건 필터링 (PoC 확장, task3 부록 F) | `company, tenders, filters` | `List[tender_id]`, 제외 사유 | FilterModule |
 | `embed_texts` | BGE-M3 임베딩 생성 | `texts: List[str]` | `List[vector]` | EmbeddingModule |
 | `calculate_match_score` | 하이브리드 적합도 계산 (2.4절) | `company, tender` | `score(0-100)`, 항목별 점수, 근거 | SimilarityModule |
-| `match_qualifications` | 필수 자격 충족 여부 분석 (Eligibility) | `company, requirements` | `matched[]`, `missing[]` | SimilarityModule |
+| `match_qualifications` | 필수 자격 충족 여부 판정 (Eligibility 필터, PoC 필수) | `company, requirements` | `matched[]`, `missing[]` | SimilarityModule |
 | `check_groundedness` | 초안 사실 항목(실적명·금액·기간·인원·자격)을 기업 프로필과 대조 (근거성 KPI 측정용) | `proposal_html, company` | 불일치 항목 목록 | 평가 스크립트 |
 
 ### 3.3 생성 도구
@@ -211,7 +215,7 @@ task3 부록 F의 모듈 매핑과 이름을 맞췄습니다.
 |------|------|
 | 출력 스키마 검증 | JSON 출력은 Pydantic 모델로 검증 (`TenderInfo`, `MatchResult` 등), HTML 출력은 `validate_section_html`로 검증 |
 | 재시도 제한 | 검증 실패 시 최대 2회 재시도, 이후 폴백 경로 실행 (근거: 비용·지연 상한으로 팀 설정) |
-| 단계 상한 | Supervisor 루프 최대 10단계 (근거: 전체 노드 6개 + 재시도 여유분, 무한 루프 방지) |
+| 단계 상한 | Supervisor 라우팅 최대 10회 (근거: 작업 노드 7개 + 여유 3회, 무한 루프 방지) |
 | 화면 렌더링 | React는 서버 HTML을 DOMPurify로 한 번 더 sanitize한 뒤 표시 (서버 검증과 이중 방어) |
 | 로깅 | 도구 호출, 입력/출력 요약, 토큰 사용량을 단계별로 기록 |
 
@@ -247,19 +251,22 @@ RAG는 목표 자체가 아니라 Agent가 호출하는 도구 중 하나로 구
 
 ## 5. 핵심 Agent 기술 스택
 
-| 구분 | 선정 기술 | 선정 사유 |
-|------|---------|---------|
-| LLM | 생성형 LLM API (프로젝트 리소스 확정 후 지정) | 한국어 처리, 긴 문서 처리, 구조화된 출력 안정성 |
-| Agent Framework | LangGraph (+ LangChain) | Supervisor 패턴, 조건 분기, 병렬 실행, interrupt 기반 HITL |
-| 백엔드 서버 | LangGraph Server (로컬: `langgraph dev`) | 그래프를 API로 바로 노출, thread·checkpoint·스트리밍 내장 → 별도 API 서버 코드 불필요 |
-| 프론트엔드 | React (Vite) + LangGraph JS SDK | 실행·진행 상태 스트리밍·HITL 재개를 SDK로 호출 |
-| HTML 보안 | DOMPurify + 서버 측 허용 태그 검증 | LLM 생성 HTML의 XSS 방지 |
-| 임베딩 | BGE-M3 | 한국어 지원, 무료 오픈소스 |
-| Vector DB | Chroma | 로컬 실행, 예제 풍부 |
-| Prompt Strategy | Chain-of-Thought + Few-Shot | CoT: 추천 근거 단계별 설명 / Few-Shot: 섹션별 HTML 예시 제공 |
-| Output Parsing | 구조화 출력 + Pydantic 검증 (JSON), 태그 화이트리스트 검증 (HTML) | 스키마 강제, 실패 시 재시도 |
-| 실행환경 | Docker | 개발 환경 통일 (LangGraph Server Docker 배포 조건은 Phase 1에 확인) |
-| Monitoring | Python logging (+ LangSmith/Langfuse 선택) | 단계별 실행 트레이스, 토큰 비용, 실패 Agent 추적 |
+선택 기준: 8주(하루 1~2시간) 안에 구현 가능한가, 로컬에서 바로 검증할 수 있는가, 과정 제공 Azure 자원과 맞는가. ※ 표시는 '현재 PoC 기준 선택'으로, 이후 바뀔 수 있는 요소입니다.
+
+| 구분 | 선정 기술 | 선정 사유 | 대체안 | PoC 장단점 |
+|------|---------|---------|------|----------|
+| 생성 LLM | Azure OpenAI (과정 제공) | 별도 비용·계정 없이 사용 가능, 구조화 출력(JSON) 지원 | 다른 생성형 LLM API | 장: 비용·발급 부담 없음 / 단: 배포 이름·할당량이 과정 설정에 종속 |
+| Agent Framework | LangGraph (+ LangChain) | Supervisor 패턴, 조건 분기, 병렬 실행, interrupt 기반 HITL (task1 학습 목표) | LangChain 단일 체인 | 장: HITL·checkpoint 내장 / 단: 학습 비용 |
+| 백엔드 서버 | LangGraph Server (로컬: `langgraph dev`) | 그래프를 API로 바로 노출, thread·checkpoint·스트리밍 내장 → 별도 API 서버 코드 불필요 | FastAPI 직접 구현 | 장: 서버 코드 0줄 / 단: 배포 방식이 LangGraph 규격에 묶임 |
+| 프론트엔드 | React (Vite) + LangGraph JS SDK | 실행·진행 상태 스트리밍·HITL 재개를 SDK로 호출 (task2 UI 결정) | Streamlit | 장: HITL 화면·HTML 미리보기 자유도 / 단: JS 작업 추가 |
+| HTML 보안 | DOMPurify + 서버 측 허용 태그 검증 | LLM 생성 HTML의 XSS 방지 | Markdown 출력 후 변환 | 장: 이중 방어 / 단: 허용 태그 관리 필요 |
+| 임베딩 ※ | BGE-M3 (로컬) | 한국어 지원, 무료 오픈소스, 외부 의존성 최소화 (task2 제약사항) | Azure OpenAI Embedding | 장: 호출 비용 없음, 오프라인 검증 / 단: 최초 모델 다운로드(약 2GB), CPU 처리 속도 |
+| Vector DB ※ | Chroma (로컬 파일 저장) | 별도 서버 설치 없이 패키지로 사용, 예제 풍부, 공고 30건 규모에 충분 | FAISS, Azure AI Search | 장: 설정 최소 / 단: 대규모·다중 사용자에는 부적합 |
+| Checkpoint ※ | LangGraph Server 내장 checkpoint | 그래프 코드에 checkpointer 지정 불필요, HITL 재개 기본 지원 | SqliteSaver, PostgresSaver 직접 지정 | 장: 설정 0 / 단: 로컬 dev 모드는 재시작 시 초기화될 수 있어 장기 보존은 Phase 3에 확인 |
+| Prompt Strategy | Chain-of-Thought + Few-Shot | CoT: 추천 근거 단계별 설명 / Few-Shot: 섹션별 HTML 예시 제공 | Zero-Shot | 장: 출력 형식 안정 / 단: 프롬프트 토큰 증가 |
+| Output Parsing | 구조화 출력 + Pydantic 검증 (JSON), 태그 화이트리스트 검증 (HTML) | 스키마 강제, 실패 시 재시도 | 자유 텍스트 파싱 | 장: 실패 감지 명확 / 단: 스키마 정의 작업 |
+| 실행환경 | 로컬 우선 → Docker (Phase 3) | 개발 중에는 `langgraph dev`로 빠르게 반복, 데모용으로 Docker 패키징 (task2 In Scope) | 처음부터 Docker 개발 | 장: 초기 세팅 단순 / 단: 환경 차이는 Phase 3에 확인 |
+| Monitoring | Python logging (+ LangSmith/Langfuse 선택) | 단계별 실행 트레이스, 토큰 비용, 실패 Agent 추적 | - | 장: 추가 비용 없음 / 단: 시각화는 선택 도구 필요 |
 
 ---
 
@@ -284,8 +291,8 @@ task3 부록 B 로드맵과 동일한 8주(하루 1~2시간) 기준입니다.
 
 | Phase | 기간 | 주요 작업 | Milestone |
 |-------|-----|---------|----------|
-| Phase 1 기초 구축 | 1-2주 | 공고 30건·가상 기업 5개사 데이터 준비, BGE-M3·Chroma 구성, `langgraph dev` 실행 확인, 공고 분석 Agent | SC-001 기본 동작 |
-| Phase 2 Agent 구현 | 3-4주 | Supervisor, 매칭 Agent, 제안서 작성 Agent(Sub-Agent 4개, HTML 출력), HITL 2곳 | SC-002 기본 동작 |
+| Phase 1 기초 구축 | 1-2주 | 9장 개발 환경 세팅, 공고 30건·가상 기업 5개사 데이터 준비, BGE-M3·Chroma 구성, `langgraph dev` 실행 확인, 최소 실행 경로(9.5) | SC-001 기본 동작 |
+| Phase 2 Agent 구현 | 3-4주 | 공고 분석·매칭 Agent 고도화, Supervisor, 제안서 작성 Agent(Sub-Agent 4개, HTML 출력), HITL 2곳 | SC-002 기본 동작 |
 | Phase 3 UI & 안정화 | 5-6주 | React 화면(추천 목록, 초안 미리보기·섹션 편집), SDK 연동, DOMPurify, HTML 다운로드, 에러 처리, 기업 10개사로 확장 | PoC 필수 기능 완성 |
 | Phase 4 검증 & 평가 | 7-8주 | 정답셋 300조합(3단계 라벨) 추천 정확도, 초안 30건 커버율·근거성, 시간 측정 3건, 담당자 피드백 반영 | PoC 완성 |
 
@@ -350,23 +357,47 @@ def assemble_proposal(state: ProposalState) -> dict:
     ...
 
 
-builder = StateGraph(ProposalState)
-builder.add_node("analyze_tenders", analyze_tenders)
-builder.add_node("match_tenders", match_tenders)
-builder.add_node("select_tender", select_tender)
-builder.add_node("generate_sections", generate_sections)
-builder.add_node("build_criteria_table", build_criteria_table)
-builder.add_node("review_proposal", review_proposal)
-builder.add_node("assemble_proposal", assemble_proposal)
+def supervisor(state: ProposalState) -> dict:
+    # Supervisor: 작업 노드 결과를 받아 다음 작업을 결정 (실제 분기는 route에서 수행)
+    return {}
 
-builder.add_edge(START, "analyze_tenders")
-builder.add_edge("analyze_tenders", "match_tenders")
-builder.add_edge("match_tenders", "select_tender")
-builder.add_edge("select_tender", "generate_sections")
-builder.add_edge("generate_sections", "build_criteria_table")
-builder.add_edge("build_criteria_table", "review_proposal")
-builder.add_edge("review_proposal", "assemble_proposal")
-builder.add_edge("assemble_proposal", END)
+def route(state: ProposalState) -> str:
+    # PoC 1차: State에 비어 있는 단계를 찾아 다음 노드로 보내는 규칙 기반 라우팅
+    if not state.get("tenders"):
+        return "analyze_tenders"
+    if not state.get("recommendations"):
+        return "match_tenders"
+    if not state.get("selected_tender_id"):
+        return "select_tender"
+    if not state.get("draft_sections"):
+        return "generate_sections"
+    if not state.get("criteria_table"):
+        return "build_criteria_table"
+    if state.get("approval_status") != "approved":
+        return "review_proposal"
+    if not state.get("proposal_html"):
+        return "assemble_proposal"
+    return END
+
+
+WORKERS = {
+    "analyze_tenders": analyze_tenders,
+    "match_tenders": match_tenders,
+    "select_tender": select_tender,
+    "generate_sections": generate_sections,
+    "build_criteria_table": build_criteria_table,
+    "review_proposal": review_proposal,
+    "assemble_proposal": assemble_proposal,
+}
+
+builder = StateGraph(ProposalState)
+builder.add_node("supervisor", supervisor)
+for name, fn in WORKERS.items():
+    builder.add_node(name, fn)
+    builder.add_edge(name, "supervisor")   # 작업이 끝나면 Supervisor로 복귀
+
+builder.add_edge(START, "supervisor")
+builder.add_conditional_edges("supervisor", route, [*WORKERS, END])
 
 # LangGraph Server가 checkpointer를 주입하므로 compile 시 지정하지 않음
 graph = builder.compile()
@@ -392,11 +423,112 @@ graph = builder.compile()
 | 다운로드 | State의 `proposal_html`을 `.html` 파일로 저장 |
 
 **설계 포인트**
+- Supervisor는 모든 작업 노드의 결과를 받아 다음 노드를 정하는 허브 역할. PoC 1차는 규칙 기반 라우팅으로 흐름을 고정하고, LLM 기반 작업 분해는 검증 Agent와 함께 2차 목표에서 적용
 - `interrupt`로 HITL ①, ②에서 실행을 멈추고, LangGraph Server의 thread checkpoint가 State를 보존해 React에서 재개 요청 시 같은 지점부터 이어서 실행
 - `generate_sections` 내부는 Sub-Agent 4개를 병렬 실행 (상세 설계 단계에서 서브그래프 또는 `Send` API로 구체화)
-- 검증 Agent(2차 목표)는 `generate_sections` 뒤에 조건 분기 노드로 추가 예정
+- 검증 Agent(2차 목표)는 `route`에 `generate_sections` 다음 분기로 추가 예정
+
+---
+
+## 9. 개발 환경 구축
+
+### 9.1 실행 환경
+
+| 항목 | 기준 | 비고 |
+|------|------|------|
+| OS | Windows 10/11 (로컬 개발) | 데모는 Docker로 패키징 (Phase 3) |
+| Python | 3.11 | LangGraph·LangChain 지원 버전 |
+| 패키지 관리 | uv + `pyproject.toml` | 가상환경 생성·의존성 고정(`uv.lock`)을 한 도구로 처리 |
+| 핵심 Python 패키지 | `langgraph`, `langchain`, `langchain-openai`, `langgraph-cli[inmem]`, `langchain-chroma`, `chromadb`, `sentence-transformers`(BGE-M3), `pydantic`, `python-dotenv`, `pytest` | 버전은 `uv.lock`으로 고정 |
+| Node.js | 20 LTS | React(Vite) 화면 |
+| 프론트 패키지 | `react`, `@langchain/langgraph-sdk`, `dompurify` | |
+| 백엔드 실행 | `langgraph dev` (로컬 LangGraph Server, 기본 포트 2024) | 별도 API 서버 없음 |
+| 프론트 실행 | `npm run dev` (Vite, 기본 포트 5173) | |
+
+### 9.2 폴더 구조 (초안)
+
+```
+AI_MASTER/
+├─ agent/                 # LangGraph 그래프 (백엔드)
+│  ├─ graph.py            # 그래프 정의, langgraph.json 진입점
+│  ├─ state.py            # ProposalState
+│  ├─ schemas.py          # Pydantic 모델 (TenderInfo, MatchResult 등)
+│  ├─ llm.py              # Azure OpenAI·BGE-M3 클라이언트 생성 (설정은 .env에서 읽음)
+│  ├─ nodes/              # 작업 노드 (공고 분석, 매칭, 제안서 작성 등)
+│  ├─ tools/              # 3장 도구 함수
+│  └─ prompts/            # 공통 System Prompt, Agent별 프롬프트
+├─ data/
+│  ├─ tenders/            # 공고 30건 JSON
+│  ├─ companies/          # 가상 기업 프로필 JSON
+│  ├─ labels/             # 정답셋 라벨 (300조합)
+│  └─ chroma/             # 벡터 DB 저장소 (git 제외)
+├─ scripts/
+│  ├─ check_env.py        # Azure OpenAI 연결 확인
+│  ├─ ingest.py           # 공고·기업 데이터 임베딩 → Chroma 적재
+│  └─ evaluate.py         # KPI 측정 (정확도, 커버율, 근거성)
+├─ tests/                 # pytest
+├─ web/                   # React (Vite)
+├─ docs/                  # task 문서
+├─ langgraph.json
+├─ pyproject.toml
+├─ .env.example           # 환경변수 목록 (값 없음, 커밋)
+└─ .env                   # 실제 비밀값 (git 제외)
+```
+
+### 9.3 Azure OpenAI 연결 및 모델 역할
+
+생성과 임베딩을 분리합니다. 생성은 과정에서 제공하는 Azure OpenAI, 임베딩은 로컬 BGE-M3를 사용합니다 (task2 제약사항: 임베딩은 오픈소스로 의존성 최소화).
+
+| 역할 | 사용 모델 | 사용처 |
+|------|---------|------|
+| 생성 (Generation) | Azure OpenAI 채팅 모델 (과정 제공 배포) | 공고 분석(JSON 추출), 추천 근거 작성, 제안서 섹션 HTML 생성, 평가기준 대응표 |
+| 임베딩 (Embedding) | BGE-M3 (로컬, `BAAI/bge-m3`) | 기술·경험 유사도 계산, Chroma 적재, 유사 실적 검색 |
+
+**환경변수 (`.env.example`)**
+
+| 변수 | 설명 | 설정 단위 |
+|------|------|---------|
+| `AZURE_OPENAI_ENDPOINT` | Azure OpenAI 리소스 엔드포인트 URL | 과정 제공 리소스 1개 |
+| `AZURE_OPENAI_API_KEY` | API 키 | 비밀값 |
+| `OPENAI_API_VERSION` | Azure OpenAI API 버전 | 과정 안내값 |
+| `AZURE_OPENAI_CHAT_DEPLOYMENT` | 생성 모델 배포 이름 | 코드에 모델명을 쓰지 않고 이 값으로 교체 |
+| `EMBEDDING_MODEL` | `BAAI/bge-m3` | 임베딩 교체 시 이 값만 변경 |
+| `CHROMA_DIR` | `./data/chroma` | 로컬 저장 경로 |
+| `LANGSMITH_API_KEY` | (선택) 실행 트레이스 | 비밀값, 미사용 시 비워 둠 |
+
+**비밀값 관리**
+- `.env`는 `.gitignore`에 추가해 커밋하지 않고, 변수 이름만 적은 `.env.example`을 커밋
+- `langgraph.json`의 `"env": ".env"`로 LangGraph Server가 실행 시 자동으로 읽음
+- React 쪽에는 Azure 키를 두지 않음 (모든 LLM 호출은 LangGraph Server에서 수행)
+
+### 9.4 실행 절차
+
+| 순서 | 작업 | 명령 | 확인 기준 |
+|------|-----|-----|---------|
+| 1 | 저장소 클론 후 의존성 설치 | `uv sync` | 가상환경 생성, 패키지 설치 완료 |
+| 2 | 환경변수 설정 | `.env.example`을 `.env`로 복사 후 값 입력 | - |
+| 3 | Azure OpenAI 연결 확인 | `uv run python scripts/check_env.py` | 짧은 테스트 응답 수신 |
+| 4 | 데이터 적재 | `uv run python scripts/ingest.py` | 공고·기업 임베딩이 `data/chroma`에 저장 (최초 1회 BGE-M3 다운로드) |
+| 5 | 그래프 서버 실행 | `uv run langgraph dev` | LangGraph Studio에서 `proposal` 그래프 확인 |
+| 6 | 화면 실행 | `cd web && npm install && npm run dev` | 브라우저에서 기업 JSON 업로드 화면 표시 |
+| 7 | 테스트 | `uv run pytest` | 도구·스키마 단위 테스트 통과 |
+| 8 | KPI 측정 (Phase 4) | `uv run python scripts/evaluate.py` | 정확도·커버율·근거성 결과 출력 |
+
+**그래프 실행 진입점**: `langgraph.json`의 `"proposal": "./agent/graph.py:graph"`. React 없이도 LangGraph Studio(5단계)에서 입력을 넣어 실행·HITL 재개를 확인할 수 있습니다.
+
+### 9.5 최소 실행 경로 (첫 구현 대상)
+
+전체 그래프를 한 번에 만들지 않고, 아래 순서로 동작을 하나씩 고정합니다. 각 단계는 LangGraph Studio에서 확인하며 React는 3단계 이후에 붙입니다.
+
+| 단계 | 범위 | 입력 → 출력 | 완료 기준 |
+|------|-----|-----------|---------|
+| 0 | 환경 확인 | - | 9.4의 1~5 통과 |
+| 1 | 공고 1건 분석 | 공고 JSON 1건 → `TenderInfo` | Pydantic 검증 통과 |
+| 2 | 기업 1개사 추천 | 기업 1개사 + 공고 30건 → 상위 5건 + 점수 + 근거 | `recommendations` State에 저장 |
+| 3 | HITL ① 연결 | 상위 5건 → 1건 선택 후 재개 | `selected_tender_id` 저장 |
+| 4 | 이후 확장 | 섹션 1개 생성 → 4개 병렬 → 대응표 → HITL ② | Phase 2 범위 |
 
 ---
 
 작성일: 2026-10-01  
-**다음 단계:** '상세 설계 및 개발 환경 구축' Task에서 State 스키마, 도구 인터페이스, Pydantic 모델, React 화면 구성 확정
+**다음 단계:** 'PoC 모듈 구현' Task에서 9.5 최소 실행 경로 0~2단계부터 구현
