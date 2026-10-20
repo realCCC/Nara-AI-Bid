@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.env
+frontend/.env
+
+# 데이터 (PII 포함 원본, 캐시, DB)
+data/raw/
+data/pdfs/
+data/chroma/
+data/app.db
+outputs/

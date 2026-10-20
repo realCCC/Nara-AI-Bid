@@ -60,6 +60,20 @@
 | 3 UI & 안정화 | 6주 (11/02-11/08) | React 화면, 업체 50건 확장, 가중치 확정 후 라벨링 |
 | 4 검증 & 평가 | 7-8주 (11/09-11/22) | KPI 측정, 최종 산출물 |
 
+## ▶️ PoC 실행
+
+```powershell
+uv sync                                   # Python 3.11 + 패키지 설치
+uv run python scripts/run_demo.py         # 최소 실행 경로 (로그인·DB·키 불필요)
+uv run pytest                             # 룰·최소 실행 경로·DB·그래프 E2E 테스트
+uv run python scripts/seed_companies.py   # data/companies/*.json → data/app.db
+uv run uvicorn app.server:app --port 8000 # 화면: http://localhost:8000 (C001~C010 / 비밀번호 1)
+```
+
+- Azure 키가 없으면 **룰 모드**로 동작합니다 (추천 = 룰 순위·근거, 평가항목 = 기술·가격 평가 비율 필드). `.env.example`을 `.env`로 복사해 키를 넣으면 상위 10건 PDF를 내려받아 RAG 순위·근거와 평가항목 추출이 켜집니다 (`uv run python scripts/check_env.py`로 확인).
+- 공고는 `data/raw/tenders_202605.json`(공고파일 폴더 사본)을 쓰며, 같은 공고번호의 변경 차수는 마지막 차수만 남기고 취소공고는 제외합니다 (500건 → 유효 443건).
+- 지역 제한 공고는 `data/region_limits.csv`에 허용 시·도를 적기 전까지 보수적으로 제외됩니다.
+
 ## ⚠️ 범위 밖
 
 - 조달청 공고 API 연계·실시간 연동·자동 수집, 마감일 필터 (내려받은 정적 파일 사용, 고도화 단계에서 개발)
