@@ -1,0 +1,71 @@
+"""SQLite: ① 로그인 성공·실패 ② 프로필 로드(해시 제외) ③ runs 저장·조회 + 그래프 E2E (룰 모드)."""
+import pytest
+
+from app.db import repository as repo
+from scripts.seed_companies import seed
+from app import config
+
+
+@pytest.fixture()
+def db(tmp_path):
+    path = tmp_path / "test.db"
+    ok, failed = seed(config.COMPANIES_DIR, path)
+    assert ok >= 1 and not failed
+    return path
+
+
+def test_login(db):
+    assert repo.login("C001", "1", db)["ok"]
+    assert repo.login("C001", "wrong", db)["error"] == "비밀번호가 일치하지 않습니다."
+    assert repo.login("C999", "1", db)["error"] == "존재하지 않는 업체 ID입니다."
+
+
+def test_login_empty_db(tmp_path):
+    repo.init_db(tmp_path / "empty.db")
+    assert "미적재" in repo.login("C001", "1", tmp_path / "empty.db")["error"]
+
+
+def test_profile_has_no_password(db):
+    p = repo.load_company_profile("C001", db)
+    assert p["회사명"] and p["업종"]["대분류"]
+    assert "비밀번호" not in p and "password_hash" not in p
+
+
+def test_seed_is_idempotent(db):
+    n = repo.count_companies(db)
+    seed(config.COMPANIES_DIR, db)
+    assert repo.count_companies(db) == n
+
+
+def test_runs(db):
+    recs = [{"rank": 1, "bidNtceNo": "T1", "bidNtceNm": "공고1", "soft_score": 90, "reasons": [], "source": "rule"}]
+    repo.save_run("th1", "C001", "recommended", recommendations=recs, db_path=db)
+    repo.save_run("th1", "C001", "selected", selection="T1", db_path=db)
+    repo.save_run("th2", "C002", "recommended", recommendations=recs, db_path=db)
+    runs = repo.list_runs("C001", db)
+    assert [(r["thread_id"], r["status"], r["title"]) for r in runs] == [("th1", "selected", "공고1")]
+    assert repo.get_run("th1", db)["selection"]["bidNtceNo"] == "T1"
+
+
+def test_graph_e2e_rule_mode(db, monkeypatch):
+    """로그인 → 추천(HITL에서 멈춤) → 선택 재개 → 초안 + 이력 저장."""
+    from langgraph.checkpoint.memory import InMemorySaver
+    from langgraph.types import Command
+
+    from app.graphs.proposal import build_graph
+
+    monkeypatch.setattr(config, "SQLITE_PATH", db)
+    monkeypatch.setattr(config, "llm_enabled", lambda: False)
+    graph = build_graph(InMemorySaver())
+    cfg = {"configurable": {"thread_id": "e2e"}}
+    profile = repo.login("C001", "1", db)["profile"]
+
+    state = graph.invoke({"company_profile": profile}, cfg)
+    assert len(state["recommendations"]) == 10 and state["rag_status"] == "rule_only"
+    assert graph.get_state(cfg).next == ("select_tender",)
+
+    pick = state["recommendations"][0]["bidNtceNo"]
+    state = graph.invoke(Command(resume=pick), cfg)
+    assert state["selected_tender_id"] == pick
+    assert "제안서 초안" in state["proposal_html"] and "[확인 필요]" in state["proposal_html"]
+    assert repo.list_runs("C001", db)[0]["status"] == "done"

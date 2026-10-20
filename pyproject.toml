@@ -1,0 +1,32 @@
+[project]
+name = "ai-master-poc"
+version = "0.1.0"
+description = "나라장터 AI 입찰 어시스턴트 PoC"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "langgraph>=0.2",
+    "langchain-openai>=0.2",
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "pydantic>=2.6",
+    "jinja2>=3.1",
+    "httpx>=0.27",
+    "pymupdf>=1.24",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+# BGE-M3 임베딩 (용량이 커서 선택 설치: uv sync --extra rag, EMBEDDING_PROVIDER=bge)
+rag = [
+    "sentence-transformers>=3.0",
+]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
