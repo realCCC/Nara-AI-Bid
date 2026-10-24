@@ -32,8 +32,8 @@ def retrieve(chunks: list[dict], query: str, k: int = 3) -> list[dict]:
 
 
 def retrieve_for_company(chunks: list[dict], company: dict, k: int = 3) -> list[dict]:
-    """업체 역량 + 고정 질의로 검색, 중복 제거."""
-    kw = " ".join(company.get("역량키워드", []))
+    """업체 역량(+키워드 의미 프로필 유사어) + 고정 질의로 검색, 중복 제거."""
+    kw = " ".join([*company.get("역량키워드", []), *(s for v in company.get("유사어", {}).values() for s in v)])
     seen, out = set(), []
     for q in FIXED_QUERIES:
         for c in retrieve(chunks, f"{kw} {q}", k):

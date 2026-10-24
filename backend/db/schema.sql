@@ -33,6 +33,14 @@ CREATE TABLE IF NOT EXISTS selections (
     selected_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS checklists (  -- 담당자 확인 체크리스트 (HITL ①): 확인한 항목과 시각
+    thread_id    TEXT PRIMARY KEY,
+    bidNtceNo    TEXT NOT NULL,
+    source       TEXT,                 -- llm / fallback
+    items_json   TEXT NOT NULL,
+    confirmed_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS proposals (
     thread_id     TEXT PRIMARY KEY,
     bidNtceNo     TEXT NOT NULL,

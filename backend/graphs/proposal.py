@@ -12,9 +12,9 @@ from langgraph.types import interrupt
 from backend import config as settings
 from backend.db import repository as repo
 from backend.graphs.recommend import build_recommend_worker
-from backend.tools import llm, proposal
+from backend.tools import keyword_profile, llm, proposal
 from backend.tools.evidence import check_evidence_sources
-from backend.tools.interview import build_questions, expand_company, to_prefs
+from backend.tools.interview import build_questions, clean_answers, expand_company, parse_note, to_prefs, with_note
 from backend.tools.loaders import tenders_by_no
 from backend.tools.pdf import tender_chunks
 from backend.tools.retrieval import retrieve, retrieve_for_company
@@ -64,17 +64,21 @@ def _tenders(state) -> dict[str, dict]:
 
 
 def prepare_interview(state: ProposalState):
-    """업체별 문항(주력 분야·유사 표현)을 미리 만든다. interrupt 재개 때 노드가 다시 실행돼도 LLM을 또 부르지 않도록 분리."""
+    """업체정보로 문항을 미리 만든다(LLM). interrupt 재개 때 노드가 다시 실행돼도 LLM을 또 부르지 않도록 분리.
+    키워드 의미 프로필도 여기서 미리 만들어 둔다 (추천 단계는 캐시를 쓴다)."""
+    keyword_profile.build(state["company_profile"])
     return {"interview_questions": build_questions(state["company_profile"])}
 
 
-def interview(state: ProposalState):  # HITL ⓪: 객관식 인터뷰. 입력에 interview_answers가 있으면 묻지 않음
+def interview(state: ProposalState):  # HITL ⓪: 객관식 + 자유 입력 인터뷰. 입력에 interview_answers가 있으면 묻지 않음
     questions = state["interview_questions"]
     answers = state.get("interview_answers")
     if answers is None:
         # 재개 값은 {"answers": {...}} — 빈 dict를 그대로 넘기면 LangGraph가 인터럽트 ID 매핑으로 해석한다
         answers = (interrupt({"questions": questions}) or {}).get("answers")
-    prefs = to_prefs(answers if isinstance(answers, dict) else {}, questions=questions)
+    answers = answers if isinstance(answers, dict) else {}
+    note = clean_answers(answers, questions).get("note")
+    prefs = to_prefs(answers, questions=questions, note_effect=parse_note(note, state["company_profile"]))
     return {"interview_answers": prefs["answers"], "prefs": prefs}
 
 
@@ -93,7 +97,7 @@ def rag_recommend(state: ProposalState):
         return {"recommendations": recs, "rag_chunks": {}, "rag_status": "rule_only"}
     search_profile = expand_company(company, state.get("prefs"))  # 청크 검색에는 인터뷰 확장어도 쓴다
     chunks = {c["bidNtceNo"]: retrieve_for_company(tender_chunks(tenders[c["bidNtceNo"]]), search_profile) for c in top}
-    ranked = llm.rag_rank(company, top, chunks, tenders)
+    ranked = llm.rag_rank(with_note(company, state.get("prefs")), top, chunks, tenders)  # 자유 입력 원문도 판단에
     if ranked is None:  # 출력 검증 실패 → 룰 순위로 대체
         return {"recommendations": recs, "rag_chunks": chunks, "rag_status": "rule_fallback"}
     by_no = {c["bidNtceNo"]: c for c in recs}
@@ -133,7 +137,8 @@ def verify_recommendations(state: ProposalState, config: RunnableConfig):  # 검
         result, reason = None, "LLM 키 없음"
     else:
         try:
-            result, reason = llm.verify_ranking(state["company_profile"], recs[:n], _tenders(state))
+            result, reason = llm.verify_ranking(with_note(state["company_profile"], state.get("prefs")), recs[:n],
+                                                _tenders(state))
         except Exception as e:  # 서브에이전트 예외는 그래프를 멈추지 않는다
             result, reason = None, f"예외: {type(e).__name__}"
     recs, verification = apply_verification(recs, result, reason, n)

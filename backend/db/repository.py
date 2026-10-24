@@ -117,11 +117,19 @@ def save_run(thread_id: str, company_id: str, status: str, *, recommendations=No
             )
 
 
+def save_checklist(thread_id: str, bidNtceNo: str, checklist: dict, db_path=None) -> None:
+    """담당자가 모두 확인한 체크리스트 (항목·출처·체크 시각)."""
+    with closing(connect(db_path)) as conn, conn:
+        conn.execute("INSERT OR REPLACE INTO checklists VALUES (?, ?, ?, ?, ?)",
+                     (thread_id, bidNtceNo, checklist.get("source"), json.dumps(checklist["items"], ensure_ascii=False), _now()))
+
+
 def list_runs(company_id: str, db_path=None) -> list[dict]:
-    """로그인 업체의 작업만 최근순. 선택 공고명(없으면 1순위 공고명)을 함께."""
+    """로그인 업체의 작업만 최근순. 선택 공고명(없으면 1순위 공고명)과 담당자 확인 여부를 함께."""
     with closing(connect(db_path)) as conn:
         rows = conn.execute(
             """SELECT r.thread_id, r.status, r.updated_at, s.bidNtceNo AS selected,
+                      (SELECT confirmed_at FROM checklists c WHERE c.thread_id = r.thread_id) AS confirmed_at,
                       COALESCE((SELECT bidNtceNm FROM recommendations x WHERE x.thread_id = r.thread_id AND x.bidNtceNo = s.bidNtceNo),
                                (SELECT bidNtceNm FROM recommendations x WHERE x.thread_id = r.thread_id AND x.rank = 1)) AS title
                FROM runs r LEFT JOIN selections s ON s.thread_id = r.thread_id
@@ -139,9 +147,11 @@ def get_run(thread_id: str, db_path=None) -> dict | None:
         recs = conn.execute("SELECT * FROM recommendations WHERE thread_id = ? ORDER BY rank", (thread_id,)).fetchall()
         sel = conn.execute("SELECT * FROM selections WHERE thread_id = ?", (thread_id,)).fetchone()
         prop = conn.execute("SELECT * FROM proposals WHERE thread_id = ?", (thread_id,)).fetchone()
+        chk = conn.execute("SELECT * FROM checklists WHERE thread_id = ?", (thread_id,)).fetchone()
     return {
         "run": dict(run),
         "recommendations": [{**dict(r), "reasons": json.loads(r["reasons_json"] or "[]")} for r in recs],
         "selection": dict(sel) if sel else None,
+        "checklist": {**dict(chk), "items": json.loads(chk["items_json"])} if chk else None,
         "proposal": dict(prop) if prop else None,
     }

@@ -11,7 +11,7 @@ RULES = {
     "H4": "참가 제한 공고인데 업체가 중소기업 아님",
     "H5": "지역 제한 허용 지역 밖 (또는 매핑표에 없음)",
     "H6": "참여 가능 금액 범위 밖",
-    "I1": "인터뷰 조건 밖 (사업규모·지역·일정)",
+    "I1": "인터뷰 조건 밖 (사업규모·지역·일정·제외어)",
 }
 RULE_LABELS = {"H1": "H1 PDF 보유", "H3": "H3 업종", "H4": "H4 참가 제한", "H5": "H5 지역 제한", "H6": "H6 예산",
                "I1": "I1 인터뷰 조건"}
@@ -63,8 +63,11 @@ def soft_score(tender: dict, company: dict, weights=None, semantic: dict | None 
         0.3 if tender.get("pubPrcrmntLrgClsfcNm") in biz.get("대분류", []) else 0.0
 
     text = _tender_text(tender)
-    hits = sorted(k for k in _keywords(company) if k and k in text)
-    s2 = max(min(1.0, len(hits) / 3), semantic["score"] if semantic else 0.0)
+    syn = company.get("유사어", {})  # 키워드 의미 프로필: 키워드와 그 유사어는 1개로 센다
+    kws = _keywords(company)
+    hits = sorted({w for k in kws for w in (k, *syn.get(k, [])) if w and w in text})
+    matched = [k for k in kws if k and any(w in text for w in (k, *syn.get(k, [])))]
+    s2 = max(min(1.0, len(matched) / 3), semantic["score"] if semantic else 0.0)
 
     amounts = [h["계약금액"] for h in company.get("과거실적", []) if h.get("계약금액")]
     budget = tender.get("budget")
@@ -78,7 +81,7 @@ def soft_score(tender: dict, company: dict, weights=None, semantic: dict | None 
 
     total = (s1 * w1 + s2 * w2 + s3 * w3 + s4 * w4) * 100
     return {"S1": round(s1, 3), "S2": round(s2, 3), "S3": round(s3, 3), "S4": round(s4, 3),
-            "total": round(total, 1), "keyword_hits": hits, "semantic": semantic}
+            "total": round(total, 1), "keyword_hits": hits, "keyword_matched": len(matched), "semantic": semantic}
 
 
 def score_items(tender: dict, company: dict, score: dict, weights=None, base_weights=None,
@@ -98,7 +101,8 @@ def score_items(tender: dict, company: dict, score: dict, weights=None, base_wei
     reasons = {
         "S1": f"{s1} (공고 {tender.get('pubPrcrmntClsfcNo', '-')} · {tender.get('pubPrcrmntLrgClsfcNm', '-')})"
               if biz else s1,
-        "S2": _s2_reason(hits, score.get("semantic"), set(expanded)),
+        "S2": _s2_reason(hits, score.get("semantic"), set(expanded),
+                         {s: k for k, v in company.get("유사어", {}).items() for s in v}, score.get("keyword_matched")),
         "S3": s3,
         "S4": f"계약방식 {tender.get('cntrctCnclsMthdNm') or '-'} "
               + ("— 선호 방식과 일치" if score["S4"] else "— 선호 방식 아님"),
@@ -109,9 +113,12 @@ def score_items(tender: dict, company: dict, score: dict, weights=None, base_wei
             for k, w, b in zip(SCORE_ITEMS, weights, base_weights)]
 
 
-def _s2_reason(hits: list[str], semantic: dict | None, expanded: set[str]) -> str:
-    labels = [f"{h}(확장어)" if h in expanded else h for h in hits]
-    text = f"문자열 일치 {len(hits)}개 / 3개면 만점" + (f": {', '.join(labels)}" if hits else "")
+def _s2_reason(hits: list[str], semantic: dict | None, expanded: set[str], synonym_of: dict[str, str] | None = None,
+               matched: int | None = None) -> str:
+    synonym_of = synonym_of or {}
+    labels = [f"{h}(확장어)" if h in expanded else f"{h}(←{synonym_of[h]})" if h in synonym_of else h for h in hits]
+    n = len(hits) if matched is None else matched
+    text = f"문자열 일치 {n}개 / 3개면 만점" + (f": {', '.join(labels)}" if hits else "")
     if semantic:
         text += f" · 의미 유사(BGE-M3, 가까운 키워드 '{semantic['keyword']}') cos {semantic['cos']:.2f} → {semantic['score']:.2f}"
     return text + (" (큰 값 사용)" if semantic else "")

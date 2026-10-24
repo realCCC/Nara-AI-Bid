@@ -7,7 +7,7 @@ import json
 from langgraph.graph import END, START, StateGraph
 
 from backend import config as settings
-from backend.tools import llm
+from backend.tools import keyword_profile, llm
 from backend.tools.interview import expand_company, interview_filter, semantic_keywords
 from backend.tools.loaders import load_region_limits, tenders_by_no
 from backend.tools.rules import hard_filter, recommend_by_rules
@@ -16,15 +16,20 @@ from backend.tools.search import hybrid_search, keyword_similarity, rerank, temp
 
 def rule_stage(tenders: list[dict], company: dict, region_limits: dict, prefs: dict | None = None) -> dict:
     """하드 필터 통과분 전체를 점수순으로 (검색 단계 후보).
-    S2는 역량 키워드 + 인터뷰 확장어 문자열 일치와, 임베딩이 되면 키워드↔공고 의미 유사도 중 큰 값."""
+    S2는 역량 키워드(+유사어) + 인터뷰 확장어 문자열 일치와, 임베딩이 되면 키워드 의미 문장↔공고 의미 유사도 중 큰 값."""
     eff = expand_company(company, prefs)
     passed = {t["bidNtceNo"]: tender_doc(t) for t in tenders
               if not hard_filter(t, eff, region_limits) and not (prefs and interview_filter(t, eff, prefs))}
     kws = semantic_keywords(company, prefs)
-    sims, reason = keyword_similarity(kws, passed, corpus=[tender_doc(t) for t in tenders])  # 백분위 기준: 전체 공고
+    texts = keyword_profile.embed_texts(company)
+    sims, reason = keyword_similarity(kws, passed, corpus=[tender_doc(t) for t in tenders],  # 백분위 기준: 전체 공고
+                                      texts=texts)
     result = recommend_by_rules(tenders, eff, region_limits, top_k=max(len(tenders), 1), prefs=prefs, semantic=sims)
+    profile = keyword_profile.build(company)
     return {"candidates": result["top"],
-            "semantic": {"used": sims is not None, "keywords": kws, "reason": reason},
+            "semantic": {"used": sims is not None, "keywords": kws, "reason": reason, "profile": profile["source"],
+                         "synonyms": keyword_profile.synonyms(company),
+                         "texts": {k: texts[k] for k in kws if k in texts}},
             "filter_log": {"funnel": result["funnel"], "rule_counts": result["rule_counts"], "excluded": result["excluded"]}}
 
 
@@ -32,10 +37,12 @@ _QUERY_CACHE: dict[str, str] = {}  # 같은 프로필은 같은 문장 → 재�
 
 
 def make_query(company: dict, prefs: dict | None = None) -> tuple[str, str]:
-    """업체정보 → 검색 문장. 주력 분야를 골랐으면 그 분야 문장, LLM이 없거나 실패하면 템플릿. 고른 유사 표현은 뒤에 붙인다."""
+    """업체정보 → 검색 문장. 주력 분야를 골랐으면 그 분야 문장, LLM이 없거나 실패하면 템플릿.
+    고른 유사 표현과 자유 입력 원문은 뒤에 붙인다.
+    (키워드 의미 프로필 유사어는 붙이지 않는다 — 20여 개를 붙이면 dense·리랭커 초점이 흐려져 실측에서 상위 10건이 나빠졌다)"""
     prefs = prefs or {}
     terms = [e["term"] for e in prefs.get("expanded", [])]
-    tail = f" 관련 표현: {', '.join(terms)}" if terms else ""
+    tail = (f" 관련 표현: {', '.join(terms)}" if terms else "") + (f" 요청: {prefs['note']}" if prefs.get("note") else "")
     if prefs.get("focus"):
         return f"{prefs['focus']['query']} 핵심 키워드: {', '.join(prefs['focus']['keywords'])}{tail}", "interview"
     if not settings.llm_enabled():
