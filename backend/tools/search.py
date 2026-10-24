@@ -135,9 +135,10 @@ class DenseRetriever:
         return sorted(((i, round(s, 4)) for i, s in zip(self.ids, scores)), key=lambda x: (-x[1], x[0]))
 
 
-def keyword_similarity(keywords: list[str], docs: dict[str, str],
-                       corpus: list[str] | None = None) -> tuple[dict[str, dict] | None, str | None]:
+def keyword_similarity(keywords: list[str], docs: dict[str, str], corpus: list[str] | None = None,
+                       texts: dict[str, str] | None = None) -> tuple[dict[str, dict] | None, str | None]:
     """키워드 ↔ 공고 의미 유사도. 문서마다 상위 3개 키워드 코사인 평균(단일 최대값보다 노이즈가 적음 — 실측 AUC 0.84→0.86).
+    texts(키워드 → 의미 프로필 문장)가 있으면 키워드 대신 그 문장을 임베딩한다.
     0-1 점수는 corpus(전체 공고) 분포의 SEM_LO_PCT~SEM_HI_PCT 백분위로 선형 변환 (업체마다 코사인 수준이 달라서).
     임베딩을 못 쓰면 (None, 사유) → S2는 문자열 일치만."""
     import numpy as np
@@ -146,7 +147,7 @@ def keyword_similarity(keywords: list[str], docs: dict[str, str],
     if not keywords or not docs:
         return None, "키워드·후보 없음"
     try:
-        kv = embed(keywords)
+        kv = embed([(texts or {}).get(k, k) for k in keywords])
         sims = embed(list(docs.values()), persist=True) @ kv.T
         ref = embed(corpus, persist=True) @ kv.T if corpus else sims
     except Exception as e:

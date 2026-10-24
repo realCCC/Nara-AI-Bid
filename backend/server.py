@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from backend import config
 from backend.db import repository as repo
 from backend.graphs.proposal import build_graph
+from backend.tools import checklist
 from backend.tools.loaders import tenders_by_no
 from backend.tools.proposal import to_download_html
 from backend.tools.rules import RULE_LABELS, RULES
@@ -35,13 +36,24 @@ class LoginIn(BaseModel):
 class InterviewIn(BaseModel):
     token: str
     thread_id: str
-    answers: dict[str, str | list[str] | None] = {}  # 건너뛴 문항은 생략·null·빈 목록 → 기본값 "전체"
+    answers: dict[str, str | list[str] | None] = {}  # 건너뛴 문항은 생략·null·빈 목록 → 기본값 "전체", note는 자유 입력
 
 
 class SelectIn(BaseModel):
     token: str
     thread_id: str
     bidNtceNo: str
+    checks: list[str] = []  # 담당자가 체크한 체크리스트 항목 id (전부 있어야 선택 확정)
+
+
+class ChecklistIn(BaseModel):
+    token: str
+    thread_id: str
+    bidNtceNo: str
+
+
+# 담당자 확인 체크리스트: (업체 ID, 공고번호) → 만든 체크리스트. 같은 공고를 새 작업으로 다시 골라도 그대로 쓴다
+CHECKLISTS: dict[tuple[str, str], dict] = {}
 
 
 def _company(token: str) -> dict:
@@ -73,7 +85,13 @@ def login(body: LoginIn):
         raise HTTPException(401, result["error"])
     token = uuid.uuid4().hex
     SESSIONS[token] = result["profile"]["업체ID"]
-    return {"token": token, "profile": result["profile"]}
+    return {"token": token, "profile": result["profile"], "code_names": _code_names()}
+
+
+def _code_names() -> dict[str, str]:
+    """조달 세부분류번호 → 세부분류명 (공고 데이터의 pubPrcrmntClsfcNo·Nm). 업체 업종·추천 근거 출처를 이름으로 보여 주는 데 쓴다."""
+    return {t["pubPrcrmntClsfcNo"]: t["pubPrcrmntClsfcNm"] for t in tenders_by_no().values()
+            if t.get("pubPrcrmntClsfcNo") and t.get("pubPrcrmntClsfcNm")}
 
 
 @app.post("/api/logout")
@@ -115,7 +133,8 @@ def answer_interview(body: InterviewIn):
         "funnel": log["funnel"],
         "rule_counts": [{"rule": RULE_LABELS[r], "desc": RULES[r], "count": n} for r, n in log["rule_counts"].items()],
         "interview": {"answers": prefs["answers"], "weights": prefs["weights"], "base_weights": prefs["base_weights"],
-                      "focus": prefs["focus"], "expanded": prefs["expanded"]},
+                      "focus": prefs["focus"], "expanded": prefs["expanded"], "exclude": prefs["exclude"],
+                      "note": prefs["note"], "note_effect": prefs["note_effect"]},
         "search": state.get("search"),
         "rag_status": state.get("rag_status"),
         "verification": state.get("verification"),
@@ -123,13 +142,33 @@ def answer_interview(body: InterviewIn):
     }
 
 
+@app.post("/api/checklist")
+def make_checklist(body: ChecklistIn):
+    """HITL ①: 고른 공고의 확인 항목 (공고 필드 + AI가 공고서에서 뽑은 조건 + AI 자격 의심 사항)."""
+    company = _owned(body.token, body.thread_id)
+    recs = graph.get_state(_cfg(body.thread_id)).values.get("recommendations") or []
+    rec = next((r for r in recs if r["bidNtceNo"] == body.bidNtceNo), None)
+    if rec is None:
+        raise HTTPException(400, f"추천 목록에 없는 공고입니다: {body.bidNtceNo}")
+    result = checklist.build(tenders_by_no()[body.bidNtceNo], rec)
+    CHECKLISTS[(company["업체ID"], body.bidNtceNo)] = result
+    return result
+
+
 @app.post("/api/select")
 def select(body: SelectIn):
-    _owned(body.token, body.thread_id)
+    company = _owned(body.token, body.thread_id)
+    made = CHECKLISTS.get((company["업체ID"], body.bidNtceNo))
+    if made is None:
+        raise HTTPException(400, "담당자 확인 체크리스트를 먼저 확인하세요.")
+    missing = [i["id"] for i in made["items"] if i["id"] not in set(body.checks)]
+    if missing:
+        raise HTTPException(400, f"확인하지 않은 항목이 {len(missing)}개 있습니다.")
     try:
         state = graph.invoke(Command(resume=body.bidNtceNo), _cfg(body.thread_id))
     except ValueError as e:
         raise HTTPException(400, str(e))
+    repo.save_checklist(body.thread_id, body.bidNtceNo, made)
     tender = tenders_by_no()[body.bidNtceNo]
     return {"criteria": state["criteria"], "proposal_html": state["proposal_html"],
             "tender": {"bidNtceNo": tender["bidNtceNo"], "bidNtceNm": tender["bidNtceNm"], "budget": tender["budget"]}}

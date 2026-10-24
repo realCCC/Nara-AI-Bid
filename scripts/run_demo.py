@@ -3,8 +3,9 @@
 uv run python scripts/run_demo.py                       # data/sample/ 사용
 uv run python scripts/run_demo.py --tenders data/raw/tenders_202605.json --company data/companies/company_01.json
 uv run python scripts/run_demo.py --pipeline --answers priority=S2,region=bonus   # 추천 Worker(필터→검색→리랭크) + 인터뷰
-uv run python scripts/run_demo.py --pipeline --questions                          # 업체별 인터뷰 문항(주력 분야·유사 표현) 보기
-uv run python scripts/run_demo.py --pipeline --answers "focus=f0,expand=엑스포|페스티벌"  # multi 문항은 | 로 구분
+uv run python scripts/run_demo.py --pipeline --questions                          # 업체별 인터뷰 문항(LLM 생성 또는 기본) 보기
+uv run python scripts/run_demo.py --pipeline --answers "q0=o1,q3=o0|o2"            # multi 문항은 | 로 구분
+uv run python scripts/run_demo.py --pipeline --answers "note=시설 공사는 빼 주세요"  # 자유 입력
 """
 import argparse
 import json
@@ -16,7 +17,7 @@ sys.path.insert(0, str(ROOT))
 
 from backend.tools.loaders import load_company_file, load_region_limits, load_tenders  # noqa: E402
 from backend.graphs.recommend import run_pipeline  # noqa: E402
-from backend.tools.interview import build_questions, to_prefs  # noqa: E402
+from backend.tools.interview import build_questions, parse_note, to_prefs  # noqa: E402
 from backend.tools.rules import recommend_by_rules  # noqa: E402
 
 SAMPLE = ROOT / "data" / "sample"
@@ -31,7 +32,9 @@ def run(tenders_path: Path, company_path: Path, region_path: Path) -> dict:
 
 def run_worker(tenders_path: Path, company_path: Path, region_path: Path, answers: dict | None = None) -> dict:
     company = load_company_file(company_path)
-    prefs = to_prefs(answers, questions=build_questions(company)) if answers is not None else None
+    prefs = None
+    if answers is not None:
+        prefs = to_prefs(answers, questions=build_questions(company), note_effect=parse_note(answers.get("note"), company))
     out = run_pipeline(load_tenders(tenders_path), company, load_region_limits(region_path), prefs)
     return {"company_id": company["업체ID"], "prefs": prefs, **out}
 
@@ -66,13 +69,13 @@ if __name__ == "__main__":
     args = p.parse_args()
     if args.questions:
         for q in build_questions(load_company_file(args.company)):
-            print(f"[{q['id']}] {q['title']}: " + " / ".join(
-                f"{o['value']}={o['label']}" + (f"(←{o['group']})" if o.get("group") else "") for o in q["options"]))
+            print(f"[{q['id']}] ({q['source']}·{q['type']}) {q['title']}: " + " / ".join(
+                f"{o['value']}={o['label']}" + (f" [{o['hint']}]" if o.get("hint") else "") for o in q.get("options", [])))
         sys.exit(0)
     if args.pipeline:
         answers = None
         if args.answers:
-            answers = {k: (v.split("|") if "|" in v or k == "expand" else v)
+            answers = {k: (v.split("|") if "|" in v else v)
                        for k, v in (kv.split("=", 1) for kv in args.answers.split(","))}
         print_worker(run_worker(args.tenders, args.company, args.regions, answers))
         sys.exit(0)

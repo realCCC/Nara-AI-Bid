@@ -5,7 +5,7 @@ import pytest
 from backend import config
 from backend.graphs.proposal import apply_verification
 from backend.tools import llm, search
-from backend.tools import interview
+from backend.tools import interview, keyword_profile
 from backend.tools.interview import boost_weights, interview_filter, to_prefs
 from backend.tools.rules import recommend_by_rules, score_items, soft_score
 from tests.test_rules import COMPANY, tender
@@ -194,11 +194,14 @@ def test_rrf():
 # ---------- 키워드 의미 확장 (인터뷰 주력 분야·유사 표현) ----------
 QS = [
     {"id": "focus", "type": "single", "options": [
-        {"value": "all", "label": "전체"},
-        {"value": "f0", "label": "교육", "keywords": ["교육", "연수"], "query": "교원 연수 운영 용역"}]},
+        {"value": "all", "label": "전체", "effect": {}},
+        {"value": "f0", "label": "교육", "effect": {"focus": {"label": "교육", "keywords": ["교육", "연수"],
+                                                              "query": "교원 연수 운영 용역"}}}]},
     {"id": "expand", "type": "multi", "options": [
-        {"value": "워크숍", "label": "워크숍", "group": "연수"}, {"value": "인공지능", "label": "인공지능", "group": "AI"}]},
+        {"value": "워크숍", "label": "워크숍", "effect": {"expand": [{"term": "워크숍", "group": "연수"}]}},
+        {"value": "인공지능", "label": "인공지능", "effect": {"expand": [{"term": "인공지능", "group": "AI"}]}}]},
     *interview.QUESTIONS,
+    interview.NOTE_QUESTION,
 ]
 
 
@@ -249,17 +252,124 @@ def test_keyword_similarity(monkeypatch):
     assert reason is None and sims["A"]["score"] == 1.0 and sims["B"]["score"] == 0.0
 
 
-def test_suggest_cleaning_and_fallback(monkeypatch):
-    raw = {"focus": [{"label": "교육", "keywords": ["교육", "없는키워드"], "query": "q"},
-                     {"label": "빈분야", "keywords": ["없음"], "query": "q"}],
-           "expansions": [{"keyword": "교육", "similar": ["연수", "강좌", "용역", "아주아주아주긴표현입니다"]},
-                          {"keyword": "모름", "similar": ["x1"]}]}
-    s = interview._clean_suggest(raw, COMPANY)
-    assert s["focus"] == [{"label": "교육", "keywords": ["교육"], "query": "q"}]
-    assert s["expansions"] == [{"keyword": "교육", "similar": ["강좌"]}]  # 업체 키워드·넓은 단어·긴 표현 제외
+# ---------- AI 생성 인터뷰 · 자유 입력 ----------
+def E(**kw):  # LLM Effect 형식 (빈 칸 기본값)
+    return {"budget_min_won": None, "budget_max_won": None, "priority": None, "region": None, "min_prep_days": None,
+            "focus_label": None, "focus_keywords": [], "focus_query": None, "expand_group": None, "expand_terms": [],
+            "exclude_terms": [], **kw}
 
-    monkeypatch.setattr(config, "llm_enabled", lambda: False)
-    interview._SUGGEST_CACHE.clear()
+
+def test_clean_effect():
+    eff = interview.clean_effect(E(budget_max_won=200_000_000, priority="S9", region="x", min_prep_days=99,
+                                   focus_keywords=["교육", "없는키워드"], focus_query="q",
+                                   expand_group="교육", expand_terms=["연수", "강좌", "용역", "아주아주아주긴표현입니다"],
+                                   exclude_terms=["시설 공사", "x"]), COMPANY)
+    assert eff == {"budget": [0, 200_000_000], "focus": {"label": "교육", "keywords": ["교육"], "query": "q"},
+                   "expand": [{"term": "강좌", "group": "교육"}], "exclude": ["시설공사"]}  # 범위 밖 값·업체 키워드·넓은 단어 제외
+    assert interview.clean_effect(E(expand_group="모름", expand_terms=["강좌"]), COMPANY) == {}  # 업체에 없는 키워드 그룹
+    assert interview.clean_effect(E(budget_min_won=3, budget_max_won=2), COMPANY) == {}
+
+
+def test_clean_questions_from_llm():
+    raw = {"questions": [
+        {"title": "이번 사업 규모", "desc": "d", "type": "single", "options": [
+            {"label": "6천만 원 이하", "effect": E(budget_max_won=60_000_000, priority="S3")},  # 섞인 효과는 버림
+            {"label": "효과 없음", "effect": E()},
+            {"label": "6천만~3억", "effect": E(budget_min_won=60_000_000, budget_max_won=300_000_000)}]},
+        {"title": "선택지 하나뿐", "desc": "", "type": "single", "options": [{"label": "a", "effect": E(priority="S1")}]},
+        {"title": "유사 표현", "desc": "", "type": "multi", "options": [
+            {"label": "강좌", "effect": E(expand_group="교육", expand_terms=["강좌"])}]},
+    ]}
+    qs = interview._clean_questions(raw, COMPANY)
+    assert [(q["id"], q["type"], q["source"]) for q in qs] == [("q0", "single", "llm"), ("q1", "multi", "llm")]
+    assert [o["value"] for o in qs[0]["options"]] == ["all", "o0", "o1"]  # '효과 없음' 버림, single은 '전체' 추가
+    assert qs[1]["options"][0]["group"] == "교육" and "확장어 강좌" in qs[1]["options"][0]["hint"]
+    assert qs[0]["options"][1]["effect"] == {"budget": [0, 60_000_000]}
+    p = to_prefs({"q0": "o1", "q1": ["o0"]}, BASE, qs)
+    assert p["budget"] == (60_000_000, 300_000_000) and p["expanded"] == [{"term": "강좌", "group": "교육"}]
+
+
+def test_build_questions_llm_and_fallback(monkeypatch):
+    good = {"questions": [{"title": f"문항{i}", "desc": "", "type": "single",
+                           "options": [{"label": "a", "effect": E(priority="S1")}, {"label": "b", "effect": E(priority="S2")}]}
+                          for i in range(3)]}
+    monkeypatch.setattr(config, "llm_enabled", lambda: True)
+    monkeypatch.setattr(llm, "generate_interview", lambda c: good)
+    interview._QUESTION_CACHE.clear()
     qs = interview.build_questions(COMPANY)
-    assert [q["id"] for q in qs][:1] == ["focus"] and "expand" not in [q["id"] for q in qs]  # LLM 없으면 실적 기반 분야만
-    assert qs[0]["options"][1]["keywords"] == ["AI", "연수"]
+    assert [q["id"] for q in qs] == ["q0", "q1", "q2", "note"] and qs[-1]["type"] == "text"
+
+    monkeypatch.setattr(llm, "generate_interview", lambda c: None)  # LLM 실패 → 기본 문항
+    interview._QUESTION_CACHE.clear()
+    qs = interview.build_questions(COMPANY)
+    assert [q["id"] for q in qs] == ["focus", "budget", "priority", "region", "schedule", "note"]
+    assert qs[0]["options"][1]["effect"]["focus"]["keywords"] == ["AI", "연수"]  # 과거 실적 기반 분야
+    interview._QUESTION_CACHE.clear()
+
+
+def test_note_answer_and_effect_overrides(monkeypatch):
+    note = "  시설 공사는 빼고 2억 이하로  "
+    p = to_prefs({"budget": "gt300", "note": note}, BASE, QS,
+                 note_effect={"budget": [0, 200_000_000], "exclude": ["시설공사"]})
+    assert p["note"] == note.strip() and p["budget"] == (0, 200_000_000)  # 자유 입력이 선택 답보다 우선
+    assert interview_filter(tender(bidNtceNm="청사 시설 공사"), COMPANY, p)
+    assert not interview_filter(tender(budget=90_000_000), COMPANY, p)
+    p = to_prefs({"focus": "f0", "note": note}, BASE, QS,
+                 note_effect={"expand": [{"term": "강좌", "group": interview.NOTE_GROUP}]})
+    assert interview.semantic_keywords(COMPANY, p) == ["교육", "연수", "강좌"]  # 직접 입력 키워드는 주력 분야와 무관하게
+    assert interview.with_note(COMPANY, p)["추가요청"] == note.strip()
+    assert to_prefs({"note": "   "}, BASE, QS)["note"] is None
+
+    monkeypatch.setattr(config, "llm_enabled", lambda: True)
+    monkeypatch.setattr(llm, "parse_note", lambda n, c: {**E(exclude_terms=["공사"]), "include_terms": ["강좌", "교육"]})
+    assert interview.parse_note("x", COMPANY) == {  # 업체 키워드(교육)는 주력 분야로, 나머지는 확장어로
+        "focus": {"label": "교육", "keywords": ["교육"], "query": "x"},
+        "expand": [{"term": "강좌", "group": interview.NOTE_GROUP}], "exclude": ["공사"]}
+    monkeypatch.setattr(config, "llm_enabled", lambda: False)
+    assert interview.parse_note("x", COMPANY) == {}
+
+
+# ---------- 키워드 의미 프로필 ----------
+KP_RAW = {"keywords": [
+    {"keyword": "교육", "description": "교원 대상 연수 과정 운영", "synonyms": ["강좌", "연수", "아카데미", "용역", "강 좌"],
+     "sample_title": "2026 ○○교육청 교원 역량강화 과정 운영 용역"},
+    {"keyword": "AI", "description": "", "synonyms": ["인공지능"], "sample_title": ""},
+    {"keyword": "없는키워드", "description": "x", "synonyms": ["무엇"], "sample_title": ""},
+]}
+
+
+def test_keyword_profile_clean_and_fallback(monkeypatch):
+    p = keyword_profile.clean(KP_RAW, COMPANY)
+    assert [k["keyword"] for k in p["keywords"]] == ["교육", "AI"] and p["source"] == "llm"
+    assert p["keywords"][0]["synonyms"] == ["강좌", "아카데미"]  # 업체 키워드·넓은 단어·중복 제외, 공백 제거
+    assert keyword_profile.build(COMPANY) == {"source": "none", "keywords": []}  # LLM 없음 → 빈 프로필
+    assert interview.expand_company(COMPANY, None) is COMPANY  # 기존 동작 그대로
+
+    keyword_profile._CACHE.clear()
+    monkeypatch.setattr(config, "llm_enabled", lambda: True)
+    monkeypatch.setattr(llm, "keyword_profile", lambda c: KP_RAW)
+    assert keyword_profile.synonyms(COMPANY) == {"교육": ["강좌", "아카데미"], "AI": ["인공지능"]}
+    texts = keyword_profile.embed_texts(COMPANY)
+    assert texts == {"교육": "교육: 교원 대상 연수 과정 운영 예) 2026 ○○교육청 교원 역량강화 과정 운영 용역", "AI": "AI"}
+
+
+def test_synonyms_count_once_in_s2(monkeypatch):
+    monkeypatch.setattr(config, "llm_enabled", lambda: True)
+    monkeypatch.setattr(llm, "keyword_profile", lambda c: KP_RAW)
+    eff = interview.expand_company(COMPANY, None)
+    assert eff["유사어"] == {"교육": ["강좌", "아카데미"], "AI": ["인공지능"]}
+    t = tender(bidNtceNm="인공지능 아카데미 강좌", pubPrcrmntClsfcNm="")
+    assert soft_score(t, COMPANY)["S2"] == 0  # 유사어 없으면 0
+    s = soft_score(t, eff)
+    assert s["keyword_hits"] == ["강좌", "아카데미", "인공지능"] and s["keyword_matched"] == 2  # 교육·AI 2개
+    assert s["S2"] == pytest.approx(2 / 3, abs=1e-3)
+    reason = score_items(t, eff, s)[1]["reason"]
+    assert "문자열 일치 2개" in reason and "강좌(←교육)" in reason
+
+
+def test_keyword_similarity_uses_profile_texts(monkeypatch):
+    seen = []
+    monkeypatch.setattr(config, "EMBEDDING_PROVIDER", "bge")
+    monkeypatch.setattr(search, "embed", lambda texts, persist=False: seen.append(list(texts)) or np.ones((len(texts), 2)))
+    search.keyword_similarity(["교육", "AI"], {"A": "a"}, texts={"교육": "교육: 교원 연수"})
+    assert seen[0] == ["교육: 교원 연수", "AI"]

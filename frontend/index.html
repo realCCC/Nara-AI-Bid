@@ -4,295 +4,413 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>나라장터 AI 입찰 어시스턴트 PoC</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Serif+KR:wght@500;700&display=swap" rel="stylesheet">
 <style>
+  /* 디자인 토큰: 차분한 회색 바탕 + 검정 글씨, AI 요소만 파란색 하나로 구분 */
   :root {
-    --bg: #f4f6fa; --card: #ffffff; --line: #e5e8ef; --text: #171c26; --sub: #646f7f; --faint: #9aa3b2;
-    --primary: #2563eb; --primary-hover: #1d4ed8; --primary-soft: #eaf1ff;
-    --ok: #12805c; --ok-soft: #e6f6ef; --warn: #b45309; --warn-soft: #fff4e0;
-    --danger: #b91c1c; --danger-soft: #fde8e8;
-    --radius: 14px; --shadow: 0 1px 2px rgba(16,24,40,.05), 0 1px 3px rgba(16,24,40,.06);
+    --bg: #F3F4F6; --card: #FFFFFF; --soft: #F8F9FB; --line: #E2E5EA; --line-strong: #D5D9E0;
+    --text: #14171C; --sub: #4B5563; --faint: #5F6774; --ink: #14171C;
+    --ai: #1D4ED8; --ai-text: #1E40AF; --ai-soft: #EBF0FD; --ai-bg: #F5F8FF; --ai-line: #D3DEFA;
+    --ok: #12663F; --ok-soft: #E4F3EA; --warn: #8A4500; --warn-text: #6E3700; --warn-soft: #FCEFD9; --warn-line: #F1D3A6;
+    --danger: #B91C1C; --danger-soft: #FDE8E8;
+    --primary: var(--ai); --llm: var(--ai);
+    --radius: 14px;
+    --sans: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, monospace;
+    --serif: "Noto Serif KR", serif;
   }
   * { box-sizing: border-box; }
-  body {
-    margin: 0; background: var(--bg); color: var(--text); font-size: 14px; line-height: 1.5;
-    font-family: "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
-  }
+  body { margin: 0; background: var(--bg); color: var(--text); font-size: 15px; line-height: 1.55; font-family: var(--sans); }
+  a { color: var(--ai); } a:hover { color: var(--ai-text); }
   .hidden { display: none !important; }
+  .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  :focus-visible { outline: 2px solid var(--ai); outline-offset: 2px; }
 
   /* 상단 바 */
-  header {
-    position: sticky; top: 0; z-index: 10; background: rgba(255,255,255,.9); backdrop-filter: blur(8px);
-    border-bottom: 1px solid var(--line); padding: 12px 24px; display: flex; justify-content: space-between; align-items: center;
-  }
-  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 15px; }
-  .brand .logo { width: 28px; height: 28px; border-radius: 8px; background: linear-gradient(135deg, #2563eb, #7c3aed); color: #fff; display: grid; place-items: center; font-size: 13px; }
-  .header-right { display: flex; align-items: center; gap: 12px; }
-  .pill { font-size: 12px; background: #f1f3f7; color: var(--sub); padding: 4px 10px; border-radius: 999px; }
-  .ghost { border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 6px 12px; cursor: pointer; font-size: 13px; color: var(--sub); }
-  .ghost:hover { background: #f7f8fb; }
+  header { position: sticky; top: 0; z-index: 10; background: var(--card); border-bottom: 1px solid var(--line); }
+  .header-inner { max-width: 1280px; margin: 0 auto; padding: 10px 24px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 28px; }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .brand .logo { width: 32px; height: 32px; border-radius: 8px; background: var(--ink); color: #fff; display: grid; place-items: center; font-weight: 700; font-size: 15px; }
+  .brand .name { display: flex; flex-direction: column; line-height: 1.25; }
+  .brand .name b { font-size: 15px; }
+  .brand .name span { font-size: 12px; color: var(--faint); }
+  .header-right { display: flex; align-items: center; gap: 10px; margin-left: auto; font-size: 13px; color: var(--sub); }
+  .ghost { border: 1px solid var(--line-strong); background: var(--card); border-radius: 8px; padding: 8px 14px; cursor: pointer; font: inherit; font-size: 13px; color: var(--text); }
+  .ghost:hover { background: var(--soft); }
 
-  /* 로그인 */
-  #loginView { min-height: calc(100vh - 60px); display: grid; place-items: center; padding: 24px; }
-  .login-card { width: 100%; max-width: 400px; background: var(--card); border-radius: 18px; box-shadow: var(--shadow); padding: 32px; border: 1px solid var(--line); }
-  .login-card h2 { margin: 0 0 6px; font-size: 20px; }
-  label { display: block; font-size: 12px; color: var(--sub); margin: 14px 0 6px; font-weight: 600; }
+  /* 탭 (헤더 안) */
+  .tabs { display: flex; flex-wrap: wrap; gap: 4px; }
+  .tabs button { border: none; background: transparent; padding: 10px 14px; border-radius: 8px; cursor: pointer; color: var(--sub); font: inherit; font-size: 14px; }
+  .tabs button.active { background: var(--bg); color: var(--text); font-weight: 600; }
+  .tabs button:hover:not(:disabled):not(.active) { background: var(--soft); }
+  .tabs button:disabled { color: #A3A9B3; cursor: not-allowed; }
+
+  /* 로그인: 소개 + 폼 2단 */
+  #loginView { min-height: calc(100vh - 60px); display: flex; align-items: center; justify-content: center; padding: 40px 16px; }
+  .login-wrap { width: 100%; max-width: 1040px; display: flex; flex-wrap: wrap; background: var(--card); border: 1px solid var(--line); border-radius: 18px; overflow: hidden; }
+  .login-intro { flex: 1 1 420px; background: var(--ink); color: #fff; padding: 48px 44px; display: flex; flex-direction: column; gap: 26px; }
+  .login-intro h1 { margin: 0; font-size: 32px; line-height: 1.3; letter-spacing: -0.02em; }
+  .login-intro ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 18px; }
+  .login-intro li { display: flex; gap: 14px; }
+  .login-intro li .n { flex: 0 0 28px; height: 28px; border-radius: 8px; background: var(--ai); display: grid; place-items: center; font-family: var(--mono); font-size: 13px; font-weight: 600; }
+  .login-intro li p { margin: 2px 0 0; color: #C5CAD3; font-size: 14px; }
+  .login-intro .foot { margin-top: auto; font-size: 13px; color: #A9B0BB; }
+  .login-card { flex: 1 1 380px; padding: 48px 44px; display: flex; flex-direction: column; justify-content: center; }
+  .login-card h2 { margin: 0; font-size: 24px; }
+  label { display: block; font-size: 14px; color: var(--text); margin: 16px 0 6px; font-weight: 600; }
   input[type=text], input[type=password] {
-    width: 100%; padding: 11px 12px; border: 1px solid #d3d9e3; border-radius: 10px; font-size: 14px; background: #fff; outline: none;
+    width: 100%; height: 48px; padding: 0 14px; border: 1px solid #C9CED6; border-radius: 10px; font: inherit; background: #fff; color: var(--text); outline: none;
   }
-  input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft); }
+  input:focus, textarea:focus { border-color: var(--ai); box-shadow: 0 0 0 3px var(--ai-soft); }
   .error { color: var(--danger); background: var(--danger-soft); padding: 9px 12px; border-radius: 10px; margin-top: 12px; display: none; font-size: 13px; }
-  .sample-note { font-size: 12px; color: var(--warn); margin-top: 14px; background: var(--warn-soft); padding: 8px 10px; border-radius: 8px; }
+  .sample-note { font-size: 13px; color: var(--warn-text); margin-top: 20px; background: var(--warn-soft); padding: 10px 12px; border-radius: 10px; }
 
-  /* 워크스페이스: 좌측 프로필 / 우측 콘텐츠 */
-  .workspace { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 20px; max-width: 1280px; margin: 20px auto; padding: 0 20px; align-items: start; }
-  .sidebar {
-    position: sticky; top: 76px; max-height: calc(100vh - 96px); overflow-y: auto;
-    display: flex; flex-direction: column; gap: 14px; scrollbar-width: thin;
-  }
-  .panel { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 18px; }
-  .panel h3 { font-size: 13px; margin: 0 0 10px; color: var(--sub); font-weight: 700; letter-spacing: .02em; }
+  /* 워크스페이스: 좌측 업체정보 / 우측 콘텐츠 */
+  .workspace { display: flex; flex-wrap: wrap; gap: 24px; max-width: 1280px; margin: 0 auto; padding: 28px 24px 80px; align-items: flex-start; }
+  .sidebar { flex: 1 1 300px; max-width: 360px; display: flex; flex-direction: column; gap: 16px; }
+  main { flex: 999 1 560px; min-width: 0; }
+  .panel { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; }
+  .panel h3 { font-size: 15px; margin: 0; }
   .profile-head { display: flex; gap: 12px; align-items: center; }
-  .avatar { width: 46px; height: 46px; border-radius: 12px; background: linear-gradient(135deg, #dbe7ff, #ece4ff); color: var(--primary); display: grid; place-items: center; font-weight: 800; font-size: 16px; flex-shrink: 0; }
-  .profile-head .name { font-weight: 700; font-size: 15px; }
-  .profile-head .sub { font-size: 12px; color: var(--sub); }
-  .kv { display: grid; grid-template-columns: 84px 1fr; gap: 8px 10px; font-size: 13px; margin-top: 14px; }
-  .kv dt { color: var(--faint); }
-  .kv dd { margin: 0; }
-  details { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 12px; }
-  details summary { cursor: pointer; font-weight: 600; font-size: 13px; color: var(--text); list-style: none; display: flex; justify-content: space-between; }
-  details summary::after { content: "＋"; color: var(--faint); }
-  details[open] summary::after { content: "－"; }
-  details .inner { margin-top: 10px; }
-  .history-item { font-size: 13px; padding: 8px 0; border-bottom: 1px dashed var(--line); }
-  .history-item:last-child { border-bottom: none; }
-  .history-item .amt { color: var(--sub); font-size: 12px; }
-
-  /* 탭 */
-  .tabs { display: inline-flex; background: #e9edf4; border-radius: 12px; padding: 4px; gap: 2px; flex-wrap: wrap; margin-bottom: 16px; }
-  .tabs button { border: none; background: transparent; padding: 8px 14px; border-radius: 9px; cursor: pointer; color: var(--sub); font-size: 13px; font-weight: 600; }
-  .tabs button.active { background: #fff; color: var(--text); box-shadow: var(--shadow); }
-  .tabs button:disabled { opacity: .4; cursor: not-allowed; }
+  .avatar { width: 44px; height: 44px; border-radius: 10px; background: var(--ai-soft); color: var(--ai); display: grid; place-items: center; font-weight: 700; flex-shrink: 0; }
+  .profile-head .name { font-weight: 700; font-size: 16px; }
+  .profile-head .sub { font-size: 12px; color: var(--faint); }
+  .kv { margin: 18px 0 0; display: flex; flex-direction: column; gap: 14px; }
+  .kv dt { font-size: 12px; color: var(--faint); }
+  .kv dd { margin: 2px 0 0; font-weight: 600; }
+  .kv dd.hint, .hint { font-size: 12px; color: var(--faint); font-weight: 400; line-height: 1.45; margin-top: 2px; }
+  .term { text-decoration: underline dotted #8A919C; text-underline-offset: 3px; cursor: help; }
+  .code-list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 400; }
+  .code-list li { display: flex; justify-content: space-between; gap: 8px; }
+  .code-list .mono { color: var(--faint); }
+  .kw-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+  .kw { font-size: 13px; font-weight: 600; padding: 4px 10px; border-radius: 999px; background: var(--ink); color: #fff; }
+  .ai-box { margin-top: 16px; padding: 14px; border-radius: 10px; background: var(--ai-bg); border: 1px solid var(--ai-line); }
+  .ai-box h4 { margin: 0; display: flex; align-items: center; gap: 6px; font-size: 13px; }
+  .ai-box ul { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+  .ai-box p { margin: 10px 0 0; font-size: 12px; color: var(--sub); }
+  .side-list { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px; font-size: 13px; }
+  .side-list li { display: flex; justify-content: space-between; gap: 12px; }
+  .side-list .mono { white-space: nowrap; }
+  .side-sec + .side-sec { border-top: 1px solid var(--line); padding-top: 14px; margin-top: 14px; }
 
   /* 공통 */
-  .page-title { margin: 0 0 4px; font-size: 20px; }
+  .page-title { margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -0.01em; }
   .muted { color: var(--sub); font-size: 13px; }
   .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
-  .btn { border: none; border-radius: 10px; padding: 10px 16px; cursor: pointer; font-size: 14px; font-weight: 600; background: #eef1f6; color: var(--text); }
-  .btn.primary { background: var(--primary); color: #fff; }
-  .btn.primary:hover:not(:disabled) { background: var(--primary-hover); }
+  .btn { border: 1px solid var(--line-strong); border-radius: 10px; padding: 11px 16px; min-height: 44px; cursor: pointer; font: inherit; font-size: 14px; font-weight: 600; background: var(--card); color: var(--text); }
+  .btn:hover:not(:disabled) { background: var(--soft); }
+  .btn.primary { background: var(--ink); border-color: var(--ink); color: #fff; }
+  .btn.primary:hover:not(:disabled) { background: #2A2F38; }
   .btn:disabled { opacity: .45; cursor: not-allowed; }
-  .btn.block { width: 100%; }
-  .tag { display: inline-block; font-size: 12px; padding: 3px 9px; border-radius: 999px; background: var(--primary-soft); color: var(--primary); margin: 2px 4px 2px 0; font-weight: 600; }
+  .btn.block { width: 100%; height: 48px; }
+  .tag { display: inline-block; font-size: 12px; padding: 3px 9px; border-radius: 999px; background: var(--ai-soft); color: var(--ai-text); margin: 2px 4px 2px 0; font-weight: 600; }
+  .tag.llm { background: var(--ai-soft); color: var(--ai-text); }
   .tag.ok { background: var(--ok-soft); color: var(--ok); }
   .tag.warn { background: var(--warn-soft); color: var(--warn); }
-  .tag.gray { background: #f1f3f7; color: var(--sub); }
+  .tag.gray { background: #F1F2F4; color: #3D4451; }
+  .tag.danger { background: var(--danger-soft); color: var(--danger); }
+  .kind { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 6px; line-height: 1.4; }
+  .kind.ai { background: var(--ai); color: #fff; }
+  .kind.rule { border: 1px solid #C9CED6; color: #3D4451; padding: 1px 6px; }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
-  th { font-size: 12px; color: var(--sub); font-weight: 600; background: #fafbfd; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 12px; color: #3D4451; font-weight: 600; background: var(--soft); }
+  .table-box { border: 1px solid var(--line); border-radius: 10px; overflow-x: auto; }
+  .table-box tr:last-child td { border-bottom: none; }
+  .sec-card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 22px 24px; margin-bottom: 20px; }
+  .sec-card h3 { margin: 0 0 6px; font-size: 16px; display: flex; align-items: center; gap: 6px; }
+  .confirm { background: var(--warn-soft); color: var(--warn-text); padding: 1px 6px; border-radius: 4px; font-weight: 600; }
+  .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--ai-line); border-top-color: var(--ai); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -2px; margin-right: 6px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
 
-  /* 퍼널 */
-  .funnel { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-top: 16px; }
-  .stage { border: 1px solid var(--line); border-radius: 12px; padding: 12px 10px; text-align: center; background: #fbfcfe; }
-  .stage .num { font-size: 20px; font-weight: 800; margin: 2px 0; }
-  .stage.done { border-color: #a7e3c9; background: var(--ok-soft); }
-  .stage.active { border-color: #a9c4ff; background: var(--primary-soft); }
-  .bar { height: 6px; background: #e9edf4; border-radius: 4px; overflow: hidden; margin-top: 12px; }
-  .bar > div { height: 100%; width: 0; background: linear-gradient(90deg, #2563eb, #7c3aed); transition: width .4s; }
+  /* 추천 단계 5개: AI 단계는 파란 바탕, 룰 단계는 흰 바탕 */
+  .funnel { list-style: none; margin: 22px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 10px; }
+  .stage { flex: 1 1 170px; padding: 14px; border-radius: 12px; background: var(--card); border: 1px solid var(--line); }
+  .stage .step-no { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--sub); }
+  .stage .step-name { margin-top: 6px; font-weight: 600; }
+  .stage .num { margin-top: 4px; font-family: var(--mono); font-size: 26px; font-weight: 600; line-height: 1.2; }
+  .stage .lbl { font-size: 12px; color: var(--sub); }
+  .stage.active { border-color: var(--ink); }
+  .stage.ai.done { background: var(--ai-bg); border-color: var(--ai-line); }
+  .stage.rule.done { background: var(--soft); }
+  .bar { height: 4px; background: var(--line); border-radius: 4px; overflow: hidden; margin-top: 16px; }
+  .bar > div { height: 100%; width: 0; background: var(--ai); transition: width .4s; }
+
+  /* 이번 추천에 AI가 쓴 정보 */
+  .status-row { margin-top: 18px; padding: 16px; border-radius: 12px; background: var(--soft); border: 1px solid var(--line); }
+  .status-row h4 { margin: 0 0 10px; font-size: 14px; }
+  .status-row dl { margin: 0; display: flex; flex-direction: column; gap: 10px; font-size: 13px; }
+  .status-row dl > div { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+  .status-row dt { flex: 0 0 96px; color: var(--faint); }
+  .status-row dd { margin: 0; flex: 1 1 300px; min-width: 0; }
+  .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; background: var(--card); border: 1px solid var(--line-strong); margin: 0 4px 4px 0; }
+  .pill.warn { background: var(--warn-soft); color: var(--warn); border-color: var(--warn-line); }
+
+  /* 인터뷰 */
+  .q { margin: 14px 0 0; padding: 18px 20px; border: 1px solid var(--line); border-radius: 12px; min-width: 0; }
+  .q legend { padding: 0 6px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+  .q legend .qn { font-family: var(--mono); font-size: 13px; color: var(--faint); }
+  .q legend .qt { font-size: 16px; font-weight: 600; }
+  .q legend .qd { font-size: 13px; color: var(--faint); }
+  .q .opts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .q .group { width: 100%; font-size: 12px; color: var(--faint); margin-top: 4px; }
+  .q .opt { flex: 1 1 180px; min-height: 44px; margin: 0; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--line-strong); background: var(--card); display: flex; gap: 10px; align-items: flex-start; cursor: pointer; font-weight: 400; }
+  .q .opt:has(input:checked) { border-color: var(--ai); background: var(--ai-bg); }
+  .q .opt input { margin: 3px 0 0; width: 16px; height: 16px; accent-color: var(--ai); flex-shrink: 0; }
+  .q .opt .ol { display: block; font-weight: 600; font-size: 14px; }
+  .q .opt .oh { display: block; font-size: 12px; color: var(--sub); }
+  .q textarea { width: 100%; margin-top: 10px; padding: 12px 14px; border-radius: 10px; border: 1px solid #C9CED6; font: inherit; font-size: 14px; color: var(--text); background: var(--card); resize: vertical; outline: none; }
+
+  /* 제외 사유 막대 */
+  .ex-list { list-style: none; margin: 14px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px; font-size: 13px; }
+  .ex-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+  .ex-list .ex-name { flex: 0 0 220px; }
+  .ex-list .ex-name small { display: block; color: var(--faint); font-size: 12px; }
+  .ex-list .ex-bar { flex: 1 1 200px; height: 8px; border-radius: 4px; background: #F1F2F4; }
+  .ex-list .ex-bar > div { height: 8px; border-radius: 4px; background: #8A919C; }
+  .ex-list .ex-n { flex: 0 0 48px; text-align: right; font-family: var(--mono); }
 
   /* 추천 카드 */
-  .rec-list { display: grid; gap: 14px; margin-top: 16px; }
-  .rec { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 18px 20px; }
-  .rec.selected { border-color: #7fd0ae; box-shadow: 0 0 0 3px var(--ok-soft); }
-  .rec-top { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
-  .rank { width: 36px; height: 36px; border-radius: 10px; background: #f1f4fa; display: grid; place-items: center; font-weight: 800; color: var(--sub); flex-shrink: 0; }
-  .rank.top { background: var(--primary); color: #fff; }
-  .rec h4 { margin: 0 0 4px; font-size: 15px; }
-  .rec .meta { font-size: 12px; color: var(--sub); }
-  .score { text-align: right; min-width: 90px; }
-  .score .val { font-size: 22px; font-weight: 800; color: var(--primary); }
-  .score .lbl { font-size: 11px; color: var(--faint); }
-  .reasons { margin-top: 14px; display: grid; gap: 8px; }
-  .reason { border-left: 3px solid var(--primary); padding: 9px 12px; background: #f8faff; border-radius: 0 10px 10px 0; font-size: 13px; }
-  .reason .src { font-size: 11px; color: var(--sub); margin-top: 4px; }
-  .quote { font-style: italic; color: #3b4456; font-size: 12.5px; margin-top: 4px; }
-  .note-excluded { color: var(--danger); font-size: 12px; margin-top: 8px; }
-  .rec-foot { display: flex; justify-content: flex-end; margin-top: 12px; }
+  .rec-list { display: flex; flex-direction: column; gap: 14px; margin-top: 14px; }
+  .rec { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px 24px; }
+  .rec.selected { border-color: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); }
+  .rec-top { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
+  .rank { width: 40px; height: 40px; border-radius: 10px; background: #F1F2F4; display: grid; place-items: center; font-family: var(--mono); font-weight: 600; font-size: 17px; flex: 0 0 40px; }
+  .rank.top { background: var(--ink); color: #fff; }
+  .rec-title { flex: 1 1 360px; min-width: 0; }
+  .rec h4 { margin: 0; font-size: 17px; line-height: 1.4; }
+  .rec .meta { margin-top: 4px; font-size: 13px; color: var(--sub); }
+  .rec .chips { margin-top: 8px; }
+  .score { text-align: right; flex: 0 0 auto; }
+  .score .val { font-family: var(--mono); font-size: 26px; font-weight: 600; line-height: 1; }
+  .score .lbl { font-size: 12px; color: var(--faint); margin-top: 4px; }
+  .rec-body { margin-top: 16px; }
+  .rec-body > summary { cursor: pointer; display: inline-flex; align-items: center; min-height: 40px; padding: 8px 14px; border: 1px solid var(--line-strong); border-radius: 10px; font-size: 14px; font-weight: 600; list-style: none; }
+  .rec-body > summary::-webkit-details-marker { display: none; }
+  .rec-body > summary::after { content: "근거 보기"; }
+  .rec-body[open] > summary::after { content: "근거 접기"; }
+  .rec-cols { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 14px; }
+  .area { flex: 1 1 340px; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+  .area h5 { margin: 0; font-size: 14px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .area h5 .sub { font-weight: 400; color: var(--faint); }
+  .area.rule { padding: 16px; border-radius: 12px; background: var(--soft); }
+  .reasons { display: flex; flex-direction: column; gap: 8px; }
+  .reason { padding: 12px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); font-size: 14px; }
+  .reason .src { font-size: 12px; color: var(--faint); margin-top: 6px; }
+  .quote { margin-top: 8px; padding: 8px 12px; background: var(--soft); border-radius: 8px; font-size: 13px; color: #3D4451; }
+  .flag { padding: 10px 14px; border-radius: 10px; background: var(--warn-soft); color: var(--warn-text); font-size: 13px; }
+  .note-excluded { color: var(--danger); font-size: 13px; margin: 0; }
+  .verify-box { margin-top: 14px; padding: 14px 16px; border-radius: 12px; border: 1px solid var(--ai-line); background: var(--ai-bg); font-size: 13px; }
+  .verify-box p { margin: 4px 0 0; color: #3D4451; }
+  .sbar { font-size: 13px; }
+  .sbar .top { display: flex; justify-content: space-between; gap: 8px; }
+  .sbar .w { color: var(--faint); }
+  .sbar .track { height: 6px; border-radius: 3px; background: var(--line); margin-top: 4px; }
+  .sbar .track > div { height: 6px; border-radius: 3px; background: var(--ink); }
+  .sbar .why { font-size: 12px; color: var(--faint); margin-top: 3px; }
+  .sbar-total { display: flex; justify-content: space-between; border-top: 1px solid var(--line); padding-top: 10px; font-weight: 600; }
+  .search-scores { font-size: 12px; color: var(--faint); font-family: var(--mono); }
+  .rec-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 
-  .proposal { border: 1px dashed #c3ccda; border-radius: 12px; padding: 20px; background: #fff; }
-  .proposal h4 { margin: 16px 0 6px; font-size: 14px; color: var(--primary); }
-  .confirm { background: var(--warn-soft); color: var(--warn); padding: 1px 6px; border-radius: 6px; font-weight: 700; }
-  .sec-card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 20px; margin-bottom: 16px; }
-  .sec-card h3 { margin: 0 0 10px; font-size: 15px; }
-  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  /* 공고 선택 · 제안서 */
+  .picked { padding: 16px 18px; border-radius: 12px; border: 1px solid var(--ok); background: var(--card); }
+  .picked h4 { margin: 0; font-size: 18px; line-height: 1.4; }
+  .checklist { margin: 14px 0 0; padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--soft); }
+  .checklist legend { padding: 0 6px; font-size: 14px; font-weight: 600; }
+  .checklist label { display: flex; align-items: flex-start; gap: 10px; min-height: 44px; margin: 0; padding: 10px 0; font-size: 14px; font-weight: 400; cursor: pointer; }
+  .checklist label + label { border-top: 1px solid var(--line); }
+  .checklist label.flagged > span { color: var(--warn-text); }
+  .checklist .cat { font-size: 12px; font-weight: 600; color: var(--faint); }
+  .checklist .src { display: block; font-size: 12px; color: var(--faint); margin-top: 4px; }
+  .checklist input { width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--ink); flex-shrink: 0; }
+  .prop-cols { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
+  .prop-cols > .sec-card { margin-bottom: 0; }
+  .prop-cols .crit { flex: 1 1 360px; min-width: 0; }
+  .prop-cols .draft { flex: 999 1 560px; min-width: 0; padding: 0; overflow: hidden; }
+  .draft-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; padding: 16px 22px; border-bottom: 1px solid var(--line); }
+  .draft-head h3 { margin: 0; }
+  .paper-bg { background: #EEF0F3; padding: 28px 20px; }
+  .proposal { max-width: 720px; margin: 0 auto; background: #fff; border: 1px solid #DADDE3; padding: 44px 48px; font-size: 14px; line-height: 1.75; }
+  .proposal h3 { font-family: var(--serif); font-size: 22px; line-height: 1.4; }
+  .proposal h4 { margin: 26px 0 8px; font-family: var(--serif); font-size: 16px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+  .proposal p { margin: 6px 0; }
+  .proposal table { margin-top: 6px; }
 
-  @media (max-width: 1000px) {
-    .workspace { grid-template-columns: 1fr; }
-    .sidebar { position: static; max-height: none; }
-    .funnel { grid-template-columns: 1fr 1fr; }
-  }
   @media (max-width: 720px) {
-    .grid2 { grid-template-columns: 1fr; }
-    .rec-top { flex-direction: column; }
+    .login-intro, .login-card { padding: 32px 24px; }
+    .proposal { padding: 28px 20px; }
     .score { text-align: left; }
   }
-  .proposal table { margin-top: 6px; }
-  .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #c9d6f5; border-top-color: var(--primary); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -2px; margin-right: 6px; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  .flag { color: var(--warn); font-size: 12px; margin-top: 6px; }
-
-  /* 고도화: 인터뷰 · 배지 · rule/llm 영역 · 점수표 */
-  :root { --llm: #7c3aed; --llm-soft: #f3edff; }
-  .tag.llm { background: var(--llm-soft); color: var(--llm); }
-  .tag.danger { background: var(--danger-soft); color: var(--danger); }
-  .q { border-top: 1px solid var(--line); padding: 12px 0; }
-  .q:first-of-type { border-top: none; }
-  .q .q-title { font-weight: 700; font-size: 14px; }
-  .q .opts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
-  .q .opts label { border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px; cursor: pointer; font-size: 13px; background: #fff; }
-  .q .opts input { display: none; }
-  .q .opts input:checked + span { color: var(--primary); font-weight: 700; }
-  .q .opts label:has(input:checked) { border-color: var(--primary); background: var(--primary-soft); }
-  .status-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 10px; font-size: 12px; }
-  .area { margin-top: 14px; border-radius: 12px; padding: 12px 14px; }
-  .area h5 { margin: 0 0 8px; font-size: 13px; display: flex; gap: 8px; align-items: center; }
-  .area.rule { background: #f8faff; border: 1px solid #dbe6ff; }
-  .area.rule h5 { color: var(--primary); }
-  .area.llm { background: #faf7ff; border: 1px solid #e4d8fb; }
-  .area.llm h5 { color: var(--llm); }
-  .area.llm .reason { border-left-color: var(--llm); background: #fff; }
-  .area.rule .reason { background: #fff; }
-  .score-table td, .score-table th { padding: 6px 8px; background: transparent; }
-  .score-table td.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
-  .score-table tfoot td { font-weight: 700; border-bottom: none; }
-  .search-scores { font-size: 12px; color: var(--sub); margin-top: 8px; font-variant-numeric: tabular-nums; }
-  .verify-box { background: #fff; border: 1px dashed #c9b6f2; border-radius: 10px; padding: 8px 12px; margin-top: 8px; font-size: 13px; }
 </style>
 </head>
 <body>
 
 <header>
-  <div class="brand"><span class="logo">AI</span> 나라장터 AI 입찰 어시스턴트</div>
-  <div class="header-right">
-    <span class="pill" id="modePill">POC · 공고 500건 파일</span>
-    <button class="ghost hidden" id="logoutBtn">로그아웃</button>
-  </div>
-</header>
-
-<!-- 1. 로그인 -->
-<section id="loginView">
-  <div class="login-card">
-    <h2>업체 로그인</h2>
-    <p class="muted" style="margin:0;">업체 ID와 비밀번호를 입력하면 업체 프로필과 맞춤 추천 공고가 표시됩니다.</p>
-    <label for="companyId">업체 ID</label>
-    <input type="text" id="companyId" placeholder="예: C001">
-    <label for="password">비밀번호</label>
-    <input type="password" id="password" placeholder="비밀번호">
-    <div class="error" id="loginError"></div>
-    <div style="margin-top:18px;"><button class="btn primary block" id="loginBtn">로그인</button></div>
-    <p class="sample-note">PoC 데모용 간이 로그인입니다 (실제 인증 아님). 가상 업체 <b>C001~C010</b>, 비밀번호 <b>1</b></p>
-  </div>
-</section>
-
-<div class="workspace hidden" id="workspace">
-  <aside class="sidebar">
-    <div class="panel">
-      <div class="profile-head">
-        <div class="avatar" id="avatar"></div>
-        <div>
-          <div class="name" id="pName"></div>
-          <div class="sub">업체 ID <span id="profileIdLabel"></span></div>
-        </div>
-      </div>
-      <div class="row" style="margin-top:12px;" id="pBadges"></div>
-      <dl class="kv">
-        <dt>소재지</dt><dd id="pRegion"></dd>
-        <dt>참여 금액</dt><dd id="pBudget"></dd>
-        <dt>계약방식</dt><dd id="pContract"></dd>
-        <dt>업종</dt><dd id="pBiz"></dd>
-      </dl>
+  <div class="header-inner">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">나</span>
+      <span class="name"><b>나라장터 입찰 어시스턴트</b><span id="modePill">PoC</span></span>
     </div>
-    <div class="panel">
-      <h3>역량 키워드</h3>
-      <div id="pKeywords"></div>
-      <details open>
-        <summary>보유 인력</summary>
-        <div class="inner" id="pStaff"></div>
-      </details>
-      <details>
-        <summary>과거 실적 <span class="muted" id="pHistoryCount"></span></summary>
-        <div class="inner" id="pHistory"></div>
-      </details>
-    </div>
-  </aside>
-
-  <main>
-    <nav class="tabs" id="tabs">
+    <nav class="tabs hidden" id="tabs" aria-label="주요 화면">
       <button data-step="recommend" class="active">맞춤 추천</button>
       <button data-step="select" disabled>공고 선택</button>
       <button data-step="proposal" disabled>제안서 초안</button>
       <button data-step="history">이전 작업</button>
     </nav>
+    <div class="header-right">
+      <span id="headerCompany"></span>
+      <button class="ghost hidden" id="logoutBtn">로그아웃</button>
+    </div>
+  </div>
+</header>
 
+<!-- 1. 로그인 -->
+<section id="loginView">
+  <div class="login-wrap">
+    <div class="login-intro">
+      <h1>우리 회사에 맞는 공고를,<br>근거와 함께.</h1>
+      <ol>
+        <li><span class="n">1</span><div><b>AI 맞춤 인터뷰</b><p>업체 프로필로 문항을 만들고, 자유롭게 적은 요청도 추천 조건으로 바꿉니다.</p></div></li>
+        <li><span class="n">2</span><div><b>공고서 근거와 출처</b><p>AI가 공고서 PDF를 읽고, 근거마다 원문 위치를 붙여 순위를 매깁니다.</p></div></li>
+        <li><span class="n">3</span><div><b>제안서 초안</b><p>고른 공고의 평가항목으로 제안서 틀을 채우고, 모르는 곳은 [확인 필요]로 남깁니다.</p></div></li>
+      </ol>
+      <p class="foot">추천은 참고용입니다. 최종 입찰 결정은 담당자가 합니다.</p>
+    </div>
+    <div class="login-card">
+      <h2>업체 로그인</h2>
+      <p class="muted" style="margin:6px 0 8px; font-size:15px;">업체 ID와 비밀번호를 입력하면 업체 프로필과 맞춤 추천이 열립니다.</p>
+      <label for="companyId">업체 ID</label>
+      <input type="text" id="companyId" placeholder="예: C001" autocomplete="username">
+      <label for="password">비밀번호</label>
+      <input type="password" id="password" placeholder="비밀번호" autocomplete="current-password">
+      <div class="error" id="loginError"></div>
+      <div style="margin-top:20px;"><button class="btn primary block" id="loginBtn">로그인</button></div>
+      <p class="sample-note">PoC 데모용 간이 로그인입니다 (실제 인증 아님). 가상 업체 <b class="mono">C001~C010</b>, 비밀번호 <b class="mono">1</b></p>
+    </div>
+  </div>
+</section>
+
+<div class="workspace hidden" id="workspace">
+  <aside class="sidebar" aria-label="업체 정보">
+    <div class="panel">
+      <div class="profile-head">
+        <div class="avatar" id="avatar"></div>
+        <div>
+          <div class="name" id="pName"></div>
+          <div class="sub">업체 ID <span class="mono" id="profileIdLabel"></span></div>
+        </div>
+      </div>
+      <div class="row" style="margin-top:12px; gap:6px;" id="pBadges"></div>
+      <dl class="kv">
+        <div>
+          <dt>참여 가능 금액</dt><dd id="pBudget"></dd>
+          <dd class="hint">공고 예산이 이 범위 밖이면 추천에서 뺍니다.</dd>
+        </div>
+        <div>
+          <dt>선호 계약방식</dt><dd id="pContract"></dd>
+          <dd class="hint">공고 방식이 같으면 점수를 더 줍니다. 용어에 마우스를 올리면 뜻이 보입니다.</dd>
+        </div>
+        <div>
+          <dt>소재지</dt><dd id="pRegion"></dd>
+          <dd class="hint">지역 제한 공고 참여 여부와 지역 가점에 씁니다.</dd>
+        </div>
+        <div>
+          <dt>업종 (조달청 공공조달분류)</dt><dd id="pBiz"></dd>
+          <dd class="hint">공고 업종이 맞아야 추천 대상이 되고, 세부분류(8자리 번호)까지 같으면 점수가 가장 높습니다.</dd>
+        </div>
+      </dl>
+    </div>
+    <div class="panel">
+      <h3>역량 키워드</h3>
+      <p class="hint" style="margin:4px 0 0;">업체가 잘하는 일. 공고 검색과 점수 계산에 씁니다.</p>
+      <div class="kw-list" id="pKeywords"></div>
+      <div class="ai-box hidden" id="pSynonyms"></div>
+    </div>
+    <div class="panel">
+      <div class="side-sec">
+        <h3>과거 실적 <span class="muted" style="font-weight:400;" id="pHistoryCount"></span></h3>
+        <p class="hint" style="margin:4px 0 0;">계약금액은 공고 예산과 규모 비교에, 실적 키워드는 키워드 점수에 씁니다.</p>
+        <ul class="side-list" id="pHistory"></ul>
+      </div>
+      <div class="side-sec">
+        <h3>보유 인력</h3>
+        <p class="hint" style="margin:4px 0 0;">점수에는 쓰지 않고, 제안서 초안의 투입 인력에 들어갑니다.</p>
+        <p style="margin:8px 0 0; font-size:13px;" id="pStaff"></p>
+      </div>
+    </div>
+  </aside>
+
+  <main>
     <section id="step-recommend" class="step">
-      <div class="panel">
-        <div class="row" style="justify-content:space-between;">
-          <div>
-            <h2 class="page-title">맞춤 공고 추천</h2>
-            <p class="muted" style="margin:0;">조건 인터뷰 → 룰로 자격을 거르고 검색·리랭크로 상위 10건을 고른 뒤, 공고서 PDF를 읽어 순위·근거를 만들고 상위 건을 검증합니다.</p>
+      <div class="panel" style="padding:24px;">
+        <div class="row" style="justify-content:space-between; align-items:flex-start; gap:16px;">
+          <div style="flex:1 1 420px; min-width:0;">
+            <h1 class="page-title">맞춤 공고 추천</h1>
+            <p class="muted" style="margin:6px 0 0; font-size:15px;">AI가 업체 프로필로 조건을 묻고, 참여할 수 있는 공고를 거른 뒤 의미로 찾아 공고서 근거와 함께 순위를 매깁니다. 단계에 마우스를 올리면 설명이 보입니다.</p>
           </div>
           <button class="btn primary" id="runBtn">추천 시작</button>
         </div>
-        <div class="funnel">
-          <div class="stage" id="st1"><div class="muted">① 유효 공고 (500건 중)</div><div class="num">–</div><div class="muted">건</div></div>
-          <div class="stage" id="st2"><div class="muted">② PDF 보유 (H1)</div><div class="num">–</div><div class="muted">건</div></div>
-          <div class="stage" id="st3"><div class="muted">③ 하드 필터 (H3~H6)</div><div class="num">–</div><div class="muted">건</div></div>
-          <div class="stage" id="st4"><div class="muted">④ 소프트 점수 상위</div><div class="num">–</div><div class="muted">건</div></div>
-          <div class="stage" id="st5"><div class="muted">⑤ RAG 순위·근거</div><div class="num">–</div><div class="muted" id="st5Label">건</div></div>
-        </div>
+        <ol class="funnel" aria-label="추천 단계">
+          <li class="stage ai" id="st1" title="LLM이 업체정보를 읽고 맞춤 문항을 만들고, 자유 입력도 조건으로 해석합니다.">
+            <div class="step-no"><span class="kind ai">AI</span>1단계</div><div class="step-name">맞춤 인터뷰</div>
+            <div class="num">–</div><div class="lbl" id="st1Label">조건 반영</div></li>
+          <li class="stage rule" id="st2" title="PDF 보유·업종·참가 제한·지역·예산·인터뷰 조건으로 참여할 수 없는 공고를 거릅니다.">
+            <div class="step-no"><span class="kind rule">룰</span>2단계</div><div class="step-name">자격 필터</div>
+            <div class="num">–</div><div class="lbl" id="st2Label">건 통과</div></li>
+          <li class="stage ai" id="st3" title="BGE-M3 의미 검색 + BM25 + 룰 순위를 합친 뒤 리랭커로 다시 정렬해 상위 건을 고릅니다.">
+            <div class="step-no"><span class="kind ai">AI</span>3단계</div><div class="step-name">의미 검색·리랭크</div>
+            <div class="num">–</div><div class="lbl" id="st3Label">건 선별</div></li>
+          <li class="stage ai" id="st4" title="LLM이 공고서 PDF 근거를 읽고 순위를 매기며, 근거마다 원문 출처를 대조합니다.">
+            <div class="step-no"><span class="kind ai">AI</span>4단계</div><div class="step-name">공고서 근거 순위</div>
+            <div class="num">–</div><div class="lbl" id="st5Label">건</div></li>
+          <li class="stage ai" id="st5" title="검증 서브에이전트가 상위 후보의 적합도를 다시 평가하고 순위를 조정합니다.">
+            <div class="step-no"><span class="kind ai">AI</span>5단계</div><div class="step-name">추천 검증</div>
+            <div class="num">–</div><div class="lbl" id="st6Label">건 재평가</div></li>
+        </ol>
         <div class="bar"><div id="progressBar"></div></div>
         <p class="muted" id="progressText" style="margin:8px 0 0;">대기 중</p>
         <div class="status-row hidden" id="statusRow"></div>
       </div>
 
-      <div class="panel hidden" id="interviewCard" style="margin-top:16px;">
-        <h3 style="font-size:15px; color:var(--text);">추천 조건 인터뷰</h3>
-        <p class="muted" style="margin:0 0 6px;">문항마다 하나를 고르세요. 고르지 않으면 기본값 <b>전체</b>로 진행합니다.</p>
+      <div class="panel hidden" id="interviewCard" style="margin-top:20px; padding:24px;">
+        <div class="row" style="gap:8px; font-size:13px; color:var(--sub);"><span class="kind ai">AI</span>1단계 · 맞춤 인터뷰 <span id="interviewSource"></span></div>
+        <h2 style="margin:6px 0 0; font-size:22px;">이번에 어떤 공고를 찾으세요?</h2>
+        <p class="muted" style="margin:6px 0 0; font-size:14px;">선택지 아래에 추천에 실제로 적용될 효과가 보입니다. 고르지 않으면 기본값 <b>전체</b>로 진행합니다.</p>
         <div id="interviewBody"></div>
-        <div class="row" style="justify-content:flex-end; margin-top:10px;">
+        <div class="row" style="justify-content:flex-end; margin-top:16px; gap:8px;">
           <button class="btn" id="skipInterviewBtn">모두 건너뛰기</button>
           <button class="btn primary" id="submitInterviewBtn">이 조건으로 추천</button>
         </div>
       </div>
 
-      <div class="panel hidden" id="excludedCard" style="margin-top:16px;">
-        <details>
-          <summary>하드 필터 제외 사유 집계</summary>
-          <div class="inner">
-            <table>
-              <thead><tr><th>규칙</th><th>조건</th><th style="text-align:right;">제외 건수</th></tr></thead>
-              <tbody id="excludedBody"></tbody>
-            </table>
-            <p class="muted" style="margin-top:8px;">한 공고가 여러 규칙에 걸리면 규칙마다 집계합니다. H2 마감일 필터는 테스트 데이터라 미적용합니다.</p>
-          </div>
-        </details>
-      </div>
-
-      <div class="hidden" id="resultCard" style="margin-top:20px;">
-        <div class="row" style="justify-content:space-between;">
-          <h3 style="margin:0; font-size:16px;">상위 <span id="topCount">10</span>건</h3>
-          <span class="muted">근거 전체를 펼쳐 보여줍니다. 검토 후 1건을 선택하세요.</span>
+      <div class="hidden" id="resultCard" style="margin-top:24px;">
+        <div class="row" style="justify-content:space-between; align-items:baseline; gap:8px;">
+          <h2 style="margin:0; font-size:18px;">추천 공고 상위 <span id="topCount">10</span>건</h2>
+          <span class="muted">추천은 참고용입니다. 근거를 확인한 뒤 1건을 선택하세요.</span>
         </div>
       </div>
       <div class="rec-list" id="resultList"></div>
+
+      <div class="panel hidden" id="excludedCard" style="margin-top:20px; padding:20px 24px;">
+        <div class="row" style="justify-content:space-between; align-items:baseline; gap:8px;">
+          <h3>자격 필터에서 제외된 공고 <span class="muted" style="font-weight:400;" id="excludedTotal"></span></h3>
+          <span class="muted" style="font-size:12px;">한 공고가 여러 규칙에 걸리면 규칙마다 셉니다. 마감일 필터는 테스트 데이터라 미적용.</span>
+        </div>
+        <ul class="ex-list" id="excludedBody"></ul>
+      </div>
     </section>
 
     <section id="step-select" class="step hidden">
       <div class="sec-card">
-        <h3>담당자 확인 · 공고 선택 (Human-in-the-loop)</h3>
+        <div class="row" style="gap:8px; font-size:13px; color:var(--sub);"><span class="kind rule">담당자</span>공고 선택 · 사람이 확정하는 단계</div>
+        <h3 style="margin-top:8px; font-size:20px;">이 공고로 제안서를 준비할까요?</h3>
         <p class="muted">추천은 참고용입니다. 최종 입찰 대상은 담당자가 확정합니다.</p>
         <div id="selectedBox" style="margin-top:14px;"><p class="muted">맞춤 추천에서 공고를 선택하세요.</p></div>
         <div class="error" id="selectError"></div>
-        <div class="row" style="justify-content:flex-end; margin-top:14px;">
+        <div class="row" style="justify-content:flex-end; margin-top:16px; gap:8px;">
           <button class="btn" data-go="recommend">다른 공고 보기</button>
           <button class="btn primary" id="toProposalBtn" disabled>제안서 초안 만들기 →</button>
         </div>
@@ -300,36 +418,41 @@
     </section>
 
     <section id="step-proposal" class="step hidden">
-      <div class="sec-card">
-        <div class="row" style="justify-content:space-between;">
-          <div>
-            <h3 style="margin-bottom:4px;">제안서 초안 템플릿</h3>
-            <p class="muted" style="margin:0;">고정 템플릿에 값만 채웁니다. 채울 수 없는 곳은 <span class="confirm">[확인 필요]</span>로 표시됩니다.</p>
+      <div class="prop-cols">
+        <div class="sec-card crit">
+          <h3><span class="kind ai">AI</span>평가항목 추출</h3>
+          <p class="muted" style="margin:0 0 12px;">공고서에서 평가항목·배점·과업 기간을 찾아 원문 위치와 함께 가져옵니다. <span id="criteriaSource"></span></p>
+          <div class="table-box">
+            <table>
+              <thead><tr><th>평가항목</th><th style="width:72px;">배점</th><th>출처</th></tr></thead>
+              <tbody id="criteriaBody"></tbody>
+            </table>
           </div>
-          <button class="btn primary" id="downloadBtn">HTML 다운로드</button>
+          <p class="muted" style="margin:12px 0 0;"><span class="confirm">[확인 필요]</span> 는 공고서·업체 정보에서 찾지 못해 담당자가 채울 칸입니다.</p>
         </div>
-      </div>
-      <div class="sec-card">
-        <h3>평가항목 추출 결과 <span class="muted" id="criteriaSource"></span></h3>
-        <table>
-          <thead><tr><th>평가항목</th><th style="width:70px;">배점</th><th>출처</th></tr></thead>
-          <tbody id="criteriaBody"></tbody>
-        </table>
-      </div>
-      <div class="sec-card">
-        <h3>미리보기</h3>
-        <div class="proposal" id="proposalPreview"></div>
+        <div class="sec-card draft">
+          <div class="draft-head">
+            <div>
+              <h3>제안서 초안 미리보기</h3>
+              <p class="muted" style="margin:2px 0 0; font-size:12px;">고정 템플릿에 값을 채웠습니다. 사실이 없는 곳은 비워 둡니다.</p>
+            </div>
+            <button class="btn primary" id="downloadBtn">HTML 다운로드</button>
+          </div>
+          <div class="paper-bg"><div class="proposal" id="proposalPreview"></div></div>
+        </div>
       </div>
     </section>
 
     <section id="step-history" class="step hidden">
       <div class="sec-card">
         <h3>이전 작업</h3>
-        <p class="muted">로그인한 업체의 작업 이력만 최근순으로 표시됩니다.</p>
-        <table>
-          <thead><tr><th>일시</th><th>공고명</th><th>상태</th><th></th></tr></thead>
-          <tbody id="historyBody"></tbody>
-        </table>
+        <p class="muted" style="margin:0 0 12px;">로그인한 업체의 작업 이력만 최근순으로 표시됩니다.</p>
+        <div class="table-box">
+          <table>
+            <thead><tr><th>일시</th><th>공고명</th><th>상태</th><th></th></tr></thead>
+            <tbody id="historyBody"></tbody>
+          </table>
+        </div>
       </div>
     </section>
   </main>
@@ -361,8 +484,8 @@ const show = step => {
 const enableTab = (step, on = true) => document.querySelector(`#tabs button[data-step="${step}"]`).disabled = !on;
 
 api("/api/status").then(s => {
-  $("modePill").textContent = (s.llm ? "LLM 연결됨" : "룰 모드 (Azure 키 없음)") +
-    ` · 검색 ${s.embedding === "bge" ? "semantic" : "keyword_fallback"} · 공고 500건 파일`;
+  $("modePill").textContent = "PoC · " + (s.llm ? "LLM 연결됨" : "룰 모드 (Azure 키 없음)") +
+    ` · 검색 ${s.embedding === "bge" ? "semantic" : "keyword_fallback"}`;
 }).catch(() => {});
 
 /* ---------- 1. 로그인 / 로그아웃 ---------- */
@@ -373,13 +496,15 @@ async function doLogin() {
   if (!pw) return fail("비밀번호를 입력하세요.");
   try {
     const r = await api("/api/login", { method: "POST", body: JSON.stringify({ company_id: id, password: pw }) });
-    session = { token: r.token, profile: r.profile };
+    session = { token: r.token, profile: r.profile, codeNames: r.code_names || {} };
   } catch (e) { return fail(e.message); }
   err.style.display = "none";
   fillProfile();
   $("loginView").classList.add("hidden");
   $("workspace").classList.remove("hidden");
   $("logoutBtn").classList.remove("hidden");
+  $("tabs").classList.remove("hidden");
+  $("headerCompany").innerHTML = `${esc(session.profile.회사명)} · <span class="mono">${esc(session.profile.업체ID)}</span>`;
   enableTab("select");
   show("recommend");
 }
@@ -393,6 +518,7 @@ function resetRecommend() {
   $("excludedCard").classList.add("hidden");
   $("interviewCard").classList.add("hidden");
   $("statusRow").classList.add("hidden");
+  $("pSynonyms").classList.add("hidden");
   $("runBtn").textContent = "추천 시작";
   $("runBtn").disabled = false;
   $("progressBar").style.width = "0%";
@@ -401,7 +527,9 @@ function resetRecommend() {
   $("selectedBox").innerHTML = '<p class="muted">맞춤 추천에서 공고를 선택하세요.</p>';
   enableTab("proposal", false);
   ["st1", "st2", "st3", "st4", "st5"].forEach(id => setStage(id, "–"));
+  Object.entries(STAGE_LABELS).forEach(([id, t]) => { $(id).textContent = t; });
 }
+const STAGE_LABELS = { st1Label: "조건 반영", st2Label: "건 통과", st3Label: "건 선별", st5Label: "건", st6Label: "건 재평가" };
 $("logoutBtn").onclick = () => {
   api(withToken("/api/logout"), { method: "POST" }).catch(() => {});
   session = { token: null, profile: null };
@@ -409,29 +537,49 @@ $("logoutBtn").onclick = () => {
   $("workspace").classList.add("hidden");
   $("loginView").classList.remove("hidden");
   $("logoutBtn").classList.add("hidden");
+  $("tabs").classList.add("hidden");
+  $("headerCompany").textContent = "";
   $("password").value = "";
   document.querySelectorAll("#tabs button").forEach((b, i) => { b.disabled = i !== 0 && i !== 3; });
 };
 
 /* ---------- 2. 좌측 프로필 ---------- */
+const CONTRACT_TERMS = {
+  일반경쟁: "참가 자격 제한 없이 누구나 참여하는 경쟁입찰",
+  제한경쟁: "지역·실적·기업 규모 등으로 참가 자격을 제한한 경쟁입찰",
+  수의계약: "경쟁입찰 없이 발주기관이 특정 업체와 직접 맺는 계약",
+};
 function fillProfile() {
   const c = session.profile;
-  $("avatar").textContent = c.회사명.slice(0, 2);
+  $("avatar").textContent = c.회사명.replace(/\s*주식회사\s*/g, "").slice(0, 2);
   $("profileIdLabel").textContent = c.업체ID;
   $("pName").textContent = c.회사명;
-  $("pBadges").innerHTML = (c.중소기업여부 ? '<span class="tag ok">중소기업</span>' : "") + `<span class="tag gray">${esc(c.소재지)}</span>`;
+  $("pBadges").innerHTML = (c.중소기업여부 ? '<span class="tag ok" title="중소기업만 참여할 수 있는 공고도 추천 대상에 포함됩니다.">중소기업</span>' : "")
+    + `<span class="tag gray">${esc(c.소재지)}</span>`;
   $("pRegion").textContent = c.소재지;
   const r = c.참여가능금액 || {};
   $("pBudget").textContent = `${won(r.최소)} ~ ${won(r.최대)}`;
-  $("pContract").textContent = (c.선호계약방식 || []).join(", ");
-  const biz = c.업종 || {};
-  $("pBiz").innerHTML = [...(biz.대분류 || []), ...(biz.세부분류번호 || [])].map(v => `<span class="tag gray">${esc(v)}</span>`).join("");
-  $("pKeywords").innerHTML = (c.역량키워드 || []).map(k => `<span class="tag">${esc(k)}</span>`).join("");
-  $("pStaff").innerHTML = Object.entries(c.보유인력 || {}).map(([k, v]) => `<div class="history-item">${esc(k)} <b>${esc(v)}명</b></div>`).join("");
+  $("pContract").innerHTML = (c.선호계약방식 || []).map(m =>
+    `<span class="term" title="${esc(CONTRACT_TERMS[m] || "")}">${esc(m)}</span>`).join(", ");
+  const biz = c.업종 || {}, names = session.codeNames || {};
+  $("pBiz").innerHTML = (biz.대분류 || []).map(v => `<div>${esc(v)}</div>`).join("")
+    + ((biz.세부분류번호 || []).length ? `<ul class="code-list">${biz.세부분류번호.map(n =>
+      `<li><span>${esc(names[n] || "이름 확인 필요")}</span><span class="mono" title="조달 세부분류번호">${esc(n)}</span></li>`).join("")}</ul>` : "");
+  $("pKeywords").innerHTML = (c.역량키워드 || []).map(k => `<span class="kw">${esc(k)}</span>`).join("");
+  $("pStaff").textContent = Object.entries(c.보유인력 || {}).map(([k, v]) => `${k} ${v}명`).join(" · ") || "정보 없음";
   const hist = c.과거실적 || [];
-  $("pHistoryCount").textContent = `(${hist.length}건)`;
+  $("pHistoryCount").textContent = `${hist.length}건`;
   $("pHistory").innerHTML = hist.map(h =>
-    `<div class="history-item">${esc(h.프로젝트명)}<div class="amt">${won(h.계약금액)} · ${esc((h.키워드 || []).join(", "))}</div></div>`).join("");
+    `<li><span>${esc(h.프로젝트명)}<span class="hint" style="display:block;">${esc((h.키워드 || []).join(", "))}</span></span><span class="mono">${won(h.계약금액)}</span></li>`).join("");
+}
+// 추천 후: AI가 만든 키워드 의미 프로필(유사어)을 역량 키워드 아래에 보여 준다
+function fillSynonyms(sem) {
+  const syn = Object.entries((sem || {}).synonyms || {});
+  if (!syn.length) return $("pSynonyms").classList.add("hidden");
+  $("pSynonyms").innerHTML = `<h4><span class="kind ai">AI</span>의미 확장 — 같은 일을 부르는 다른 말</h4>
+    <ul>${syn.map(([k, v]) => `<li title="${esc((sem.texts || {})[k] || "")}"><b>${esc(k)}</b> <span class="muted">→</span> ${esc(v.join(" · "))}</li>`).join("")}</ul>
+    <p>공고명이 다른 표현을 써도 찾습니다. 원본 키워드는 바뀌지 않습니다.</p>`;
+  $("pSynonyms").classList.remove("hidden");
 }
 
 /* ---------- 3. 추천 ---------- */
@@ -442,8 +590,8 @@ function setStage(id, value, cls) {
   if (cls) el.classList.add(cls);
 }
 const RAG_LABEL = { llm: "건", rule_only: "룰 순위 (LLM 미연결)", rule_fallback: "룰 순위로 대체", no_candidates: "후보 없음" };
-const MODE_BADGE = { llm: '<span class="tag llm">llm</span>', rule_only: '<span class="tag gray">rule_only</span>',
-  rule_fallback: '<span class="tag warn">rule_fallback</span>', no_candidates: '<span class="tag gray">후보 없음</span>' };
+const MODE_BADGE = { llm: '<span class="tag llm">AI 순위·근거</span>', rule_only: '<span class="tag gray">룰 순위만 (LLM 미연결)</span>',
+  rule_fallback: '<span class="tag warn">룰 순위로 대체</span>', no_candidates: '<span class="tag gray">후보 없음</span>' };
 let lastAnswers = {};  // 초안 생성 후 같은 조건으로 새 작업을 만들 때 재사용
 
 // 추천 시작 → 인터뷰 문항(HITL ⓪)
@@ -463,19 +611,23 @@ async function answerInterview(answers) {
 async function runRecommend() { await startRecommend(); return answerInterview(lastAnswers); }
 
 function renderInterview(questions) {
-  const opt = (q, o, type) => `<label title="${esc((o.keywords || []).join(", "))}"><input type="${type}" name="q_${esc(q.id)}"
-    value="${esc(o.value)}" ${type === "radio" && o.value === "all" ? "checked" : ""}><span>${esc(o.label)}</span></label>`;
+  const opt = (q, o, type) => `<label class="opt"><input type="${type}" name="q_${esc(q.id)}"
+    value="${esc(o.value)}" ${type === "radio" && o.value === "all" ? "checked" : ""}><span>
+    <span class="ol">${esc(o.label)}</span><span class="oh">${esc(o.hint || (o.value === "all" ? "조건 없음 (기본값)" : ""))}</span></span></label>`;
   const multi = q => {  // 업체 키워드별로 묶어서 체크박스
     const groups = {};
     q.options.forEach(o => (groups[o.group] = groups[o.group] || []).push(o));
     return Object.entries(groups).map(([g, os]) =>
-      `<div class="opts"><span class="tag gray">${esc(g)}</span>${os.map(o => opt(q, o, "checkbox")).join("")}</div>`).join("");
+      `<div class="opts">${g && g !== "undefined" && g !== "null" ? `<div class="group">${esc(g)} 관련</div>` : ""}${os.map(o => opt(q, o, "checkbox")).join("")}</div>`).join("");
   };
-  $("interviewBody").innerHTML = questions.map(q => `
-    <div class="q">
-      <div class="q-title">${esc(q.title)} <span class="muted" style="font-weight:400;">· ${esc(q.desc)}</span></div>
-      ${q.type === "multi" ? multi(q) : `<div class="opts">${q.options.map(o => opt(q, o, "radio")).join("")}</div>`}
-    </div>`).join("");
+  const text = q => `<textarea name="q_${esc(q.id)}" rows="3" maxlength="500" aria-label="${esc(q.title)}" placeholder="${esc(q.placeholder || "")}"></textarea>`;
+  $("interviewBody").innerHTML = questions.map((q, i) => `
+    <fieldset class="q">
+      <legend><span class="qn">Q${i + 1}</span><span class="qt">${esc(q.title)}</span><span class="qd">${esc(q.desc)}${q.type === "multi" ? " · 여러 개 선택" : ""}</span></legend>
+      ${q.type === "text" ? text(q) : q.type === "multi" ? multi(q) : `<div class="opts">${q.options.map(o => opt(q, o, "radio")).join("")}</div>`}
+    </fieldset>`).join("");
+  $("interviewSource").innerHTML = questions.some(q => q.source === "llm")
+    ? '<span class="tag llm">업체 프로필로 만든 문항</span>' : '<span class="tag gray">기본 문항</span>';
   $("interviewCard").classList.remove("hidden");
 }
 const collectAnswers = () => {
@@ -485,6 +637,7 @@ const collectAnswers = () => {
     if (i.type === "checkbox") (out[k] = out[k] || []).push(i.value);
     else out[k] = i.value === "all" ? null : i.value;
   });
+  document.querySelectorAll("#interviewBody textarea").forEach(t => { if (t.value.trim()) out[t.name.slice(2)] = t.value.trim(); });
   return out;
 };
 
@@ -497,6 +650,9 @@ $("runBtn").onclick = async () => {
   try {
     const r = await startRecommend();
     renderInterview(r.questions);
+    const ai = r.questions.some(q => q.source === "llm");
+    setStage("st1", r.questions.length, "active");
+    $("st1Label").textContent = ai ? "개 AI 맞춤 문항" : "개 기본 문항";
     $("progressText").textContent = "추천 조건을 고른 뒤 [이 조건으로 추천]을 누르세요.";
   } catch (e) {
     $("progressText").textContent = "오류: " + e.message;
@@ -511,23 +667,33 @@ async function submitInterview(answers) {
   state.running = true;
   lastAnswers = answers;
   $("interviewCard").classList.add("hidden");
-  setStage("st1", "…", "active");
+  const nCond = Object.values(answers).filter(x => x && (!Array.isArray(x) || x.length)).length;
+  setStage("st1", nCond || "–", "done");
+  $("st1Label").textContent = nCond ? "개 조건 반영" : "건너뜀 (기본 조건)";
+  setStage("st2", "…", "active");
   $("progressBar").style.width = "30%";
-  $("progressText").innerHTML = '<span class="spinner"></span>하드 필터 → 검색·리랭크 → RAG 순위 → 검증 중 (LLM 연결 시 PDF 다운로드로 1~2분 걸릴 수 있습니다)';
+  $("progressText").innerHTML = '<span class="spinner"></span>자격 필터 → 의미 검색·리랭크 → 공고서 근거 순위 → 검증 중 (LLM 연결 시 PDF 다운로드로 1~2분 걸릴 수 있습니다)';
   try {
     const r = await answerInterview(answers);
-    const f = r.funnel, isLlm = r.rag_status === "llm";
-    setStage("st1", f.total, "done");
-    setStage("st2", f.pdf, "done");
-    setStage("st3", f.hard_pass, "done");
-    setStage("st4", f.top, "done");
-    setStage("st5", isLlm ? r.recommendations.length : "–", isLlm ? "done" : "");
+    const f = r.funnel, isLlm = r.rag_status === "llm", s = r.search || {}, v = r.verification;
+    setStage("st2", f.hard_pass, "done");
+    $("st2Label").textContent = `건 통과 (${f.total}건 중)`;
+    setStage("st3", f.top, s.path === "semantic" ? "done" : "");
+    $("st3Label").textContent = s.path === "semantic" ? `건 선별${s.rerank === "applied" ? " · 리랭크" : ""}` : "건 (키워드 검색만)";
+    setStage("st4", isLlm ? r.recommendations.length : "–", isLlm ? "done" : "");
     $("st5Label").textContent = RAG_LABEL[r.rag_status] || "건";
+    const verified = v && v.status === "passed";
+    setStage("st5", verified ? v.checked : "–", verified ? "done" : "");
+    $("st6Label").textContent = verified ? `건 재평가 · ${v.changed ? "순위 조정" : "순위 유지"}` : "생략";
     $("progressBar").style.width = "100%";
-    $("progressText").textContent = isLlm ? "출처 대조 완료" : "룰 추천 완료 — Azure 키를 입력하면 RAG 순위·근거·검증이 추가됩니다";
+    $("progressText").textContent = isLlm ? "출처 대조 완료" : "룰 추천 완료 — Azure 키를 입력하면 공고서 근거 순위·검증이 추가됩니다";
     renderStatus(r);
-    $("excludedBody").innerHTML = r.rule_counts.map(x =>
-      `<tr><td>${esc(x.rule)}</td><td>${esc(x.desc)}</td><td style="text-align:right;">${x.count}</td></tr>`).join("");
+    const maxN = Math.max(1, ...r.rule_counts.map(x => x.count));
+    $("excludedTotal").textContent = `${f.total - f.hard_pass}건`;
+    $("excludedBody").innerHTML = r.rule_counts.filter(x => x.count).sort((a, b) => b.count - a.count).map(x =>
+      `<li><span class="ex-name">${esc(x.desc)}<small>${esc(x.rule)}</small></span>
+        <span class="ex-bar"><div style="width:${Math.round(x.count / maxN * 100)}%;"></div></span>
+        <span class="ex-n">${x.count}</span></li>`).join("") || '<li class="muted">제외된 공고가 없습니다.</li>';
     $("excludedCard").classList.remove("hidden");
     $("runBtn").textContent = "다시 추천";
     renderResults();
@@ -542,64 +708,95 @@ async function submitInterview(answers) {
 $("submitInterviewBtn").onclick = () => submitInterview(collectAnswers());
 $("skipInterviewBtn").onclick = () => submitInterview({});
 
-// 실행 경로 · 검증 상태 배지
+// 이번 추천에 AI가 쓴 정보 (실행 경로 · 검증 상태 · 인터뷰 반영)
 function renderStatus(r) {
   const s = r.search || {}, v = r.verification;
-  const ans = Object.entries(r.interview?.answers || {}).map(([k, v]) => [k, Array.isArray(v) ? v.join("·") : v]);
+  const ans = Object.entries(r.interview?.answers || {}).filter(([k]) => k !== "note")
+    .map(([k, v]) => [k, Array.isArray(v) ? v.join("·") : v]);
   const sem = s.semantic || {}, iv = r.interview || {};
-  const vTag = !v ? "" : v.status === "passed"
-    ? `<span class="tag ok">검증 통과</span><span class="muted">상위 ${v.checked}건 재평가${v.changed ? " · 순위 조정됨" : " · 순위 유지"}</span>`
-    : `<span class="tag warn">검증 생략 (원순위 유지)</span><span class="muted">사유: ${esc(v.reason)}</span>`;
-  $("statusRow").innerHTML = `
-    <span class="muted">분석</span>${MODE_BADGE[r.rag_status] || esc(r.rag_status)}
-    <span class="muted">· 검색</span><span class="tag ${s.path === "semantic" ? "ok" : "gray"}">${esc(s.path || "-")}</span>
-    <span class="tag ${s.rerank === "applied" ? "ok" : "gray"}">리랭크 ${s.rerank === "applied" ? "적용" : "생략"}</span>
-    <span class="muted">· ${vTag ? "" : "검증 -"}</span>${vTag}
-    <div style="flex-basis:100%;" class="muted">키워드 의미 매칭(S2):
-      ${sem.used ? `<span class="tag ok">BGE-M3</span> ${esc((sem.keywords || []).join(", "))}` : `<span class="tag gray">문자열 일치만</span> ${esc(sem.reason || "")}`}
-      ${iv.focus ? ` · 주력 분야 <b>${esc(iv.focus.label)}</b>` : ""}
-      ${(iv.expanded || []).length ? ` · 확장어 ${iv.expanded.map(e => `${esc(e.term)}(←${esc(e.group)})`).join(", ")}` : ""}</div>
-    <div style="flex-basis:100%;" class="muted">검색 문장(${({ llm: "LLM 생성", interview: "인터뷰 주력 분야", template: "템플릿" })[s.query_source] || "-"}): ${esc(s.query || "-")}
-      ${s.path !== "semantic" && s.reason ? ` · ${esc(s.reason)}` : ""}${s.rerank !== "applied" && s.rerank_reason ? ` · 리랭크 생략: ${esc(s.rerank_reason)}` : ""}</div>
-    ${ans.length ? `<div style="flex-basis:100%;" class="muted">인터뷰 반영: ${ans.map(([k, v]) => `<span class="tag">${esc(k)}=${esc(v)}</span>`).join("")}</div>` : ""}`;
+  const vTag = !v ? '<span class="tag gray">검증 -</span>' : v.status === "passed"
+    ? `<span class="tag ok">검증 통과</span> 상위 ${v.checked}건 재평가${v.changed ? " · 순위 조정됨" : " · 순위 유지"}`
+    : `<span class="tag warn">검증 생략 (원순위 유지)</span> 사유: ${esc(v.reason)}`;
+  const row = (k, html) => `<div><dt>${k}</dt><dd>${html}</dd></div>`;
+  const rows = [
+    row("실행 경로", `${MODE_BADGE[r.rag_status] || esc(r.rag_status)}
+      <span class="tag ${s.path === "semantic" ? "ok" : "gray"}">검색 ${s.path === "semantic" ? "의미 검색" : "키워드 검색"}</span>
+      <span class="tag ${s.rerank === "applied" ? "ok" : "gray"}">리랭크 ${s.rerank === "applied" ? "적용" : "생략"}</span> ${vTag}`),
+    row("검색 문장", `${esc(s.query || "-")} <span class="muted">(${({ llm: "AI 작성", interview: "인터뷰 주력 분야", template: "템플릿" })[s.query_source] || "-"})</span>
+      ${s.path !== "semantic" && s.reason ? `<div class="muted">${esc(s.reason)}</div>` : ""}${s.rerank !== "applied" && s.rerank_reason ? `<div class="muted">리랭크 생략: ${esc(s.rerank_reason)}</div>` : ""}`),
+    row("의미 매칭", sem.used ? `<span class="tag ok">BGE-M3</span> ${esc((sem.keywords || []).join(", "))}` : `<span class="tag gray">문자열 일치만</span> ${esc(sem.reason || "")}`),
+  ];
+  const cond = [
+    ...(iv.focus ? [`<span class="pill">주력 분야 · ${esc(iv.focus.label)}</span>`] : []),
+    ...((iv.expanded || []).length ? [`<span class="pill">유사 표현 · ${iv.expanded.map(e => esc(e.term)).join(", ")}</span>`] : []),
+    ...(iv.exclude || []).map(x => `<span class="pill warn">제외어 · ${esc(x)}</span>`),
+  ];
+  if (cond.length || ans.length) rows.push(row("인터뷰 조건", cond.join("") + (ans.length ? `<div class="muted">반영한 답 ${ans.length}개</div>` : "")));
+  if (iv.note) rows.push(row("직접 입력", `“${esc(iv.note)}” ${iv.note_effect
+    ? `<span class="tag llm">AI가 해석</span> <span class="muted">${esc(Object.keys(iv.note_effect).join(", "))}</span>`
+    : '<span class="tag gray">검색 문장에만 반영</span>'}`));
+  $("statusRow").innerHTML = `<h4>이번 추천에 AI가 쓴 정보</h4><dl>${rows.join("")}</dl>`;
   $("statusRow").classList.remove("hidden");
+  fillSynonyms(sem);
 }
 
+// 근거 출처를 사용자 말로: 필드명 → 한글 이름, 분류번호 → 분류명, 금액 → 만 원 (원래 필드명은 툴팁)
+const FIELD_LABELS = {
+  bidNtceNm: "공고명", purchsObjPrdctList: "구매 대상 품목", pubPrcrmntLrgClsfcNm: "업종 대분류",
+  pubPrcrmntClsfcNo: "업종 세부분류", pubPrcrmntClsfcNm: "업종 세부분류", asignBdgtAmt: "배정 예산",
+  cntrctCnclsMthdNm: "계약방식", bidPrtcptLmtYn: "중소기업 참여 제한", rgnLmtBidLocplcJdgmBssNm: "지역 제한 기준",
+  bidClseDt: "입찰 마감",
+  역량키워드: "역량 키워드", 참여가능금액: "참여 가능 금액", 선호계약방식: "선호 계약방식", 업종: "업종", 과거실적: "과거 실적",
+};
+function fieldValue(name, value) {
+  if (!value) return "(값 없음)";
+  if (name === "pubPrcrmntClsfcNo") {
+    const n = (session.codeNames || {})[value];
+    return n ? `${n} (${value})` : value;
+  }
+  if (name === "asignBdgtAmt" && /^\d+$/.test(value)) return won(Number(value));
+  if (name === "bidPrtcptLmtYn") return value === "Y" ? "있음" : value === "N" ? "없음" : value;
+  return value;
+}
 function reasonSrc(r) {
-  return r.source_type === "pdf" ? `PDF · ${esc(r.file)} p.${esc(r.page)}` : `필드 · ${esc(r.field)} = ${esc(r.value || "(없음)")}`;
+  if (r.source_type === "pdf") return `공고서 「${esc(r.file)}」 ${esc(r.page)}쪽`;
+  const [scope, ...rest] = (r.field || "").split("."), name = rest.join(".") || scope;
+  const where = scope === "company" ? "업체 정보" : "공고 정보";
+  return `<span title="${esc(r.field || "")}">${where} · ${esc(FIELD_LABELS[name] || name)}: ${esc(fieldValue(name, r.value))}</span>`;
 }
 
 const fmt = (v, d = 3) => v == null ? "-" : Number(v).toFixed(d).replace(/\.?0+$/, "");
-function scoreTable(detail) {
+// 점수 근거: 항목마다 막대(점수 0-1) + 가중치(인터뷰로 바뀌면 전→후) + 반영 점수
+function scoreBars(detail) {
   if (!detail) return "";
   const rows = detail.items.map(it => {
-    const w = it.weight == null ? "가점" : it.interview && it.base_weight != null && Math.abs(it.weight - it.base_weight) > 1e-9
-      ? `${fmt(it.base_weight)} → <b>${fmt(it.weight)}</b>` : fmt(it.weight);
-    return `<tr><td>${esc(it.item)}${it.interview ? ' <span class="tag warn">인터뷰 반영</span>' : ""}</td>
-      <td class="num">${fmt(it.score)}</td><td class="num">${w}</td><td class="num">${fmt(it.points, 1)}</td>
-      <td class="muted">${esc(it.reason)}</td></tr>`;
+    const changed = it.interview && it.base_weight != null && Math.abs(it.weight - it.base_weight) > 1e-9;
+    const w = it.weight == null ? "가점" : changed ? `× ${fmt(it.base_weight)} → <b>${fmt(it.weight)}</b>` : `× ${fmt(it.weight)}`;
+    const pct = it.score == null ? 100 : Math.round(Math.min(1, it.score) * 100);
+    return `<div class="sbar">
+      <div class="top"><span>${esc(it.item)} <span class="w">${w}</span>${it.interview ? ' <span class="tag warn">인터뷰 반영</span>' : ""}</span>
+        <span class="mono">${it.weight == null ? "+" : ""}${fmt(it.points, 1)}</span></div>
+      <div class="track"><div style="width:${pct}%;"></div></div>
+      <div class="why">${esc(it.reason)}</div></div>`;
   }).join("");
-  return `<table class="score-table"><thead><tr><th>항목</th><th style="text-align:right;">점수</th>
-    <th style="text-align:right;">가중치</th><th style="text-align:right;">반영</th><th>이유</th></tr></thead>
-    <tbody>${rows}</tbody><tfoot><tr><td>합산</td><td></td><td></td><td class="num">${fmt(detail.total, 1)}</td>
-    <td class="muted">Σ 점수 × 가중치 × 100${detail.items.some(x => x.key === "B1") ? " + 가점" : ""}</td></tr></tfoot></table>`;
+  return rows + `<div class="sbar-total"><span>합계${detail.items.some(x => x.key === "B1") ? " (가점 포함)" : ""}</span><span class="mono">${fmt(detail.total, 1)}</span></div>`;
 }
 function searchScores(s) {
   if (!s) return "";
-  return `<div class="search-scores">검색 단계 · 룰 순위 ${s.rule_rank ?? "-"}위 · dense ${fmt(s.dense, 4)} · BM25 ${fmt(s.bm25, 2)}
+  return `<div class="search-scores">검색 · 룰 ${s.rule_rank ?? "-"}위 · dense ${fmt(s.dense, 4)} · BM25 ${fmt(s.bm25, 2)}
     · RRF ${fmt(s.rrf, 5)} · rerank ${fmt(s.rerank, 4)}</div>`;
 }
 const reasonList = rs => (rs || []).map(r => `
   <div class="reason">
     <div>${esc(r.text)}</div>
     ${r.quote ? `<div class="quote">“${esc(r.quote)}”</div>` : ""}
-    <div class="src">출처: ${reasonSrc(r)}</div>
+    <div class="src">출처 · ${reasonSrc(r)}</div>
   </div>`).join("");
 
 function renderResults() {
   const list = $("resultList");
   if (!state.recs.length) {
-    list.innerHTML = '<div class="panel">하드 필터를 통과한 공고가 없습니다. 위 제외 사유를 확인하세요.</div>';
+    list.innerHTML = '<div class="panel">자격 필터를 통과한 공고가 없습니다. 아래 제외 사유를 확인하세요.</div>';
     $("resultCard").classList.add("hidden");
     return;
   }
@@ -607,43 +804,48 @@ function renderResults() {
   list.innerHTML = state.recs.map((t, i) => {
     const isSel = state.selected === t.bidNtceNo;
     const weak = t.source === "rag" && !t.pdf_evidence;
-    const status = isSel ? '<span class="tag ok">선택됨</span>'
-      : weak ? '<span class="tag warn">근거 부족</span>'
-      : t.source === "rag" ? '<span class="tag">RAG 근거</span>' : '<span class="tag gray">룰 근거</span>';
     const rule = t.rule || { reasons: t.reasons, score_detail: t.score_detail }, L = t.llm, V = t.verify;
-    const rankMove = V && V.rank_before !== t.rank ? ` <span class="tag llm">검증 ${V.rank_before}위→${t.rank}위</span>` : "";
+    const chips = [
+      isSel ? '<span class="tag ok">선택됨</span>' : "",
+      t.source === "rag" ? `<span class="tag llm">AI 순위 ${t.rank}위</span>` : '<span class="tag gray">룰 순위</span>',
+      V ? (V.rank_before !== t.rank ? `<span class="tag llm">검증 ${V.rank_before}위 → ${t.rank}위</span>` : '<span class="tag ok">검증 통과 · 순위 유지</span>') : "",
+      weak ? '<span class="tag warn">공고서 근거 부족</span>' : t.source === "rag" ? '<span class="tag gray">공고서 PDF 근거 있음</span>' : "",
+    ].join("");
+    const aiArea = L ? `
+      <section class="area" aria-label="AI 근거">
+        <h5><span class="kind ai">AI</span>공고서를 읽고 찾은 근거 <span class="sub">· 출처 대조 통과 ${L.reasons.length}개${L.dropped ? ` · 대조 실패 ${L.dropped}개 숨김` : ""}</span></h5>
+        <div class="reasons">${L.reasons.length ? reasonList(L.reasons) : '<div class="muted">출처가 확인된 AI 근거가 없습니다.</div>'}</div>
+        ${(L.qualification_flags || []).map(f => `<div class="flag"><b>참가 자격 확인 필요</b> · ${esc(f)}</div>`).join("")}
+        ${weak ? `<p class="note-excluded">※ 공고서 PDF 근거가 부족합니다.</p>` : ""}
+      </section>` : `
+      <section class="area" aria-label="AI 근거">
+        <h5><span class="kind ai">AI</span>공고서 근거</h5>
+        <div class="muted">${state.result?.rag_status === "rule_fallback" ? "AI 출력 검증에 실패해 룰 결과만 표시합니다." : "LLM 미연결 — 룰 결과만 표시합니다."}</div>
+        <div class="reasons">${reasonList(rule.reasons)}</div>
+      </section>`;
     return `
     <article class="rec ${isSel ? "selected" : ""}">
       <div class="rec-top">
-        <div class="row" style="flex-wrap:nowrap; align-items:flex-start;">
-          <div class="rank ${i < 3 ? "top" : ""}">${i + 1}</div>
-          <div>
-            <h4>${esc(t.bidNtceNm)}</h4>
-            <div class="meta">공고번호 ${esc(t.bidNtceNo)} · 예산 ${won(t.budget)}</div>
-            <div style="margin-top:6px;">${status}${rankMove}</div>
-          </div>
+        <div class="rank ${i < 3 ? "top" : ""}">${i + 1}</div>
+        <div class="rec-title">
+          <h4>${esc(t.bidNtceNm)}</h4>
+          <div class="meta">예산 ${won(t.budget)} · <span class="mono">${esc(t.bidNtceNo)}</span></div>
+          <div class="chips">${chips}</div>
         </div>
-        <div class="score">
-          <div class="val">${esc(t.soft_score)}</div>
-          <div class="lbl">룰 점수</div>
+        <div class="score"><div class="val">${esc(t.soft_score)}</div><div class="lbl">룰 점수 / 100</div></div>
+      </div>
+      <details class="rec-body" ${i === 0 ? "open" : ""}>
+        <summary></summary>
+        <div class="rec-cols">
+          ${aiArea}
+          <section class="area rule" aria-label="점수 근거">
+            <h5><span class="kind rule">룰</span>점수 근거</h5>
+            ${scoreBars(rule.score_detail)}
+            ${searchScores(t.search)}
+          </section>
         </div>
-      </div>
-      <div class="area rule">
-        <h5><span class="tag">rule</span> 룰 분석 — 점수 근거</h5>
-        ${scoreTable(rule.score_detail)}
-        ${searchScores(t.search)}
-        <div class="reasons">${reasonList(rule.reasons)}</div>
-      </div>
-      ${L ? `
-      <div class="area llm">
-        <h5><span class="tag llm">llm</span> LLM 분석 — 공고서 근거 (출처 대조 통과 ${L.reasons.length}개${L.dropped ? ` · 대조 실패 ${L.dropped}개 숨김` : ""})</h5>
-        <div class="reasons">${L.reasons.length ? reasonList(L.reasons) : '<div class="muted">출처가 확인된 LLM 근거가 없습니다.</div>'}</div>
-        ${(L.qualification_flags || []).map(f => `<div class="flag">⚠ ${esc(f)}</div>`).join("")}
-        ${weak ? `<p class="note-excluded">※ 공고서 PDF 근거가 부족합니다.</p>` : ""}
-        ${V ? `<div class="verify-box"><b>검증 서브에이전트</b> · 적합도 ${esc(V.fit_score)}점 · 원순위 ${esc(V.rank_before)}위<div class="muted">${esc(V.comment)}</div></div>` : ""}
-      </div>` : `
-      <div class="area llm"><h5><span class="tag llm">llm</span> LLM 분석</h5>
-        <div class="muted">${state.result?.rag_status === "rule_fallback" ? "LLM 출력 검증에 실패해 룰 결과만 표시합니다 (rule_fallback)." : "LLM 미연결 — 룰 결과만 표시합니다 (rule_only)."}</div></div>`}
+        ${V ? `<div class="verify-box"><b>검증 에이전트 의견</b> <span class="muted">· 적합도 ${esc(V.fit_score)}점 · 원순위 ${esc(V.rank_before)}위</span><p>${esc(V.comment)}</p></div>` : ""}
+      </details>
       <div class="rec-foot">
         <button class="btn ${isSel ? "" : "primary"}" data-pick="${esc(t.bidNtceNo)}" ${isSel ? "disabled" : ""}>${isSel ? "선택 완료" : "이 공고 선택"}</button>
       </div>
@@ -654,19 +856,59 @@ function renderResults() {
 }
 
 /* ---------- 4. 선택 (HITL ①) ---------- */
-function pickTender(no) {
+// 담당자 확인 체크리스트: 서버가 공고 필드 + AI가 공고서에서 뽑은 조건(원문 대조 통과) + AI 자격 의심 사항으로 만든다.
+// 전부 체크해야 초안 버튼이 켜지고, 확정할 때 체크한 항목이 작업 이력에 저장된다
+const ORIGIN_TAG = { ai: '<span class="tag llm">AI · 공고서</span>', field: '<span class="tag gray">공고 정보</span>',
+  flag: '<span class="tag warn">AI 확인 사항</span>', common: '<span class="tag gray">공통</span>' };
+const checklistDone = () => {
+  const boxes = [...document.querySelectorAll("#checklist input")];
+  return boxes.length > 0 && boxes.every(i => i.checked);
+};
+async function pickTender(no) {
   state.selected = no;
   const t = state.recs.find(x => x.bidNtceNo === no);
   $("selectedBox").innerHTML = `
-    <div class="reason" style="border-left-color:var(--ok);">
-      <h4 style="margin:0 0 4px;">${esc(t.bidNtceNm)}</h4>
-      <div class="muted">공고번호 ${esc(t.bidNtceNo)} · 예산 ${won(t.budget)} · 룰 점수 ${esc(t.soft_score)}</div>
-      <div style="margin-top:6px;">선택된 공고의 평가항목으로 제안서 초안을 만듭니다.</div>
-    </div>`;
+    <div class="picked">
+      <h4>${esc(t.bidNtceNm)}</h4>
+      <div class="muted" style="margin-top:4px;">예산 ${won(t.budget)} · 룰 점수 ${esc(t.soft_score)} · 추천 ${esc(t.rank)}위 · <span class="mono">${esc(t.bidNtceNo)}</span></div>
+      <p style="margin:8px 0 0; font-size:14px;">선택한 공고의 평가항목으로 제안서 초안을 만듭니다.</p>
+    </div>
+    <div id="checklistBox"><p class="muted" style="margin:14px 0 0;"><span class="spinner"></span>AI가 공고서에서 확인할 조건을 찾는 중 (PDF를 읽느라 몇 초 걸릴 수 있습니다)</p></div>`;
   $("selectError").style.display = "none";
-  $("toProposalBtn").disabled = false;
+  $("toProposalBtn").disabled = true;
   renderResults();
   show("select");
+  try {
+    const cl = await api("/api/checklist", { method: "POST",
+      body: JSON.stringify({ token: session.token, thread_id: state.threadId, bidNtceNo: no }) });
+    if (state.selected !== no) return;  // 기다리는 사이 다른 공고를 골랐으면 버림
+    renderChecklist(cl);
+  } catch (e) {
+    $("checklistBox").innerHTML = "";
+    $("selectError").textContent = "체크리스트를 만들지 못했습니다: " + e.message;
+    $("selectError").style.display = "block";
+  }
+}
+function renderChecklist(cl) {
+  const n = cl.items.length;
+  $("checklistBox").innerHTML = `
+    <fieldset class="checklist" id="checklist">
+      <legend>제안서를 만들기 전에 확인하세요 <span class="muted" id="checkCount">0 / ${n}</span>
+        ${cl.source === "llm" ? '<span class="tag llm">AI가 공고서에서 뽑은 항목 포함</span>' : '<span class="tag gray">공고서 항목 없음 · 기본 항목</span>'}</legend>
+      ${cl.items.map(x => `
+        <label class="${x.origin === "flag" ? "flagged" : ""}"><input type="checkbox" value="${esc(x.id)}">
+          <span><span class="cat">${esc(x.category)}</span> ${ORIGIN_TAG[x.origin] || ""}<br>${esc(x.text)}
+            ${x.evidence?.quote ? `<span class="quote" style="display:block;">“${esc(x.evidence.quote)}”</span>` : ""}
+            ${x.evidence ? `<span class="src">출처 · ${reasonSrc(x.evidence)}</span>` : ""}</span></label>`).join("")}
+      <p class="muted" style="margin:6px 0 0; font-size:12px;">원문과 대조해 모두 체크하면 제안서 초안을 만들 수 있습니다. 체크한 항목은 작업 이력에 저장됩니다.</p>
+    </fieldset>`;
+  const update = () => {
+    const done = [...document.querySelectorAll("#checklist input")].filter(i => i.checked).length;
+    $("checkCount").textContent = `${done} / ${n}`;
+    $("toProposalBtn").disabled = !checklistDone();
+  };
+  document.querySelectorAll("#checklist input").forEach(i => i.onchange = update);
+  update();
 }
 
 $("toProposalBtn").onclick = async () => {
@@ -677,8 +919,9 @@ $("toProposalBtn").onclick = async () => {
   try {
     // 이미 초안을 만든 작업이면(그래프 종료) 같은 조건으로 새 작업을 만든 뒤 재개
     if (state.done) { const sel = state.selected; await runRecommend(); state.selected = sel; }
+    const checks = [...document.querySelectorAll("#checklist input:checked")].map(i => i.value);
     const r = await api("/api/select", { method: "POST",
-      body: JSON.stringify({ token: session.token, thread_id: state.threadId, bidNtceNo: state.selected }) });
+      body: JSON.stringify({ token: session.token, thread_id: state.threadId, bidNtceNo: state.selected, checks }) });
     state.done = true;
     renderProposal(r);
     enableTab("proposal");
@@ -687,7 +930,7 @@ $("toProposalBtn").onclick = async () => {
     $("selectError").textContent = e.message;
     $("selectError").style.display = "block";
   } finally {
-    btn.disabled = false;
+    btn.disabled = !checklistDone();
     btn.textContent = "제안서 초안 만들기 →";
   }
 };
@@ -695,9 +938,9 @@ $("toProposalBtn").onclick = async () => {
 /* ---------- 5. 제안서 초안 ---------- */
 function renderProposal(r) {
   const c = r.criteria;
-  $("criteriaSource").textContent = c.source === "llm" ? "(공고서 PDF에서 LLM 추출)" : "(대체값: 기술·가격 평가 비율 필드)";
+  $("criteriaSource").textContent = c.source === "llm" ? "(공고서 PDF에서 AI 추출)" : "(대체값: 기술·가격 평가 비율 필드)";
   $("criteriaBody").innerHTML = c.items.map(k =>
-    `<tr><td>${esc(k.item)}</td><td>${k.score == null ? CONFIRM : esc(Math.round(k.score)) + "점"}</td><td class="muted">${esc(k.source)}</td></tr>`).join("") +
+    `<tr><td>${esc(k.item)}</td><td class="mono">${k.score == null ? CONFIRM : esc(Math.round(k.score)) + "점"}</td><td class="muted">${esc(k.source)}</td></tr>`).join("") +
     `<tr><td>과업 기간</td><td colspan="2">${c.period ? esc(c.period) : CONFIRM}</td></tr>`;
   $("proposalPreview").innerHTML = r.proposal_html;  // 서버 Jinja2 autoescape로 생성된 HTML
   const threadId = state.threadId;
@@ -712,8 +955,8 @@ async function loadHistory() {
   try {
     const { runs } = await api(withToken("/api/history"));
     $("historyBody").innerHTML = runs.length ? runs.map(r => `
-      <tr><td>${esc(r.updated_at.replace("T", " ").slice(0, 16))}</td><td>${esc(r.title || "-")}</td>
-      <td>${STATUS_TAG[r.status] || esc(r.status)}</td>
+      <tr><td class="mono">${esc(r.updated_at.replace("T", " ").slice(0, 16))}</td><td>${esc(r.title || "-")}</td>
+      <td>${STATUS_TAG[r.status] || esc(r.status)}${r.confirmed_at ? ` <span class="tag ok" title="${esc(r.confirmed_at.replace("T", " "))}">담당자 확인</span>` : ""}</td>
       <td>${r.status === "done" ? `<a href="${withToken(`/api/proposal/${encodeURIComponent(r.thread_id)}`)}">다운로드</a>` : ""}</td></tr>`).join("")
       : '<tr><td colspan="4" class="muted">아직 작업 이력이 없습니다.</td></tr>';
   } catch (e) {
