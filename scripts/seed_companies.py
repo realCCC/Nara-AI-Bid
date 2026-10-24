@@ -11,9 +11,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from pydantic import ValidationError  # noqa: E402
 
-from app import config  # noqa: E402
-from app.db import repository as repo  # noqa: E402
-from app.schemas import CompanySeed  # noqa: E402
+from backend import config  # noqa: E402
+from backend.db import repository as repo  # noqa: E402
+from backend.schemas import CompanySeed  # noqa: E402
 
 
 def seed(companies_dir: Path, db_path: Path | None = None) -> tuple[int, list[str]]:

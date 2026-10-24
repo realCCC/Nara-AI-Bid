@@ -3,7 +3,7 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from app.tools.rules import tokenize, won
+from backend.tools.rules import tokenize, won
 
 _env = Environment(loader=FileSystemLoader(Path(__file__).resolve().parent.parent / "templates"),
                    autoescape=select_autoescape(["html", "j2"]))

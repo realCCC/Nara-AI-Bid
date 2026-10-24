@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from app.tools.loaders import load_company_file, load_tenders
+from backend.tools.loaders import load_company_file, load_tenders
 from scripts.run_demo import SAMPLE, run
 
 EXPECTED_EXCLUDED_RULES = sorted([["H1"], ["H1"], ["H3"], ["H3"], ["H5"], ["H6"], ["H6"]])

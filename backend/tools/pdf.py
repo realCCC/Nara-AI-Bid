@@ -5,7 +5,7 @@ from pathlib import Path
 
 import httpx
 
-from app import config
+from backend import config
 
 log = logging.getLogger(__name__)
 CHUNK_SIZE = 500

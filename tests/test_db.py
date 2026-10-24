@@ -1,9 +1,9 @@
 """SQLite: ① 로그인 성공·실패 ② 프로필 로드(해시 제외) ③ runs 저장·조회 + 그래프 E2E (룰 모드)."""
 import pytest
 
-from app.db import repository as repo
+from backend.db import repository as repo
 from scripts.seed_companies import seed
-from app import config
+from backend import config
 
 
 @pytest.fixture()
@@ -48,20 +48,25 @@ def test_runs(db):
 
 
 def test_graph_e2e_rule_mode(db, monkeypatch):
-    """로그인 → 추천(HITL에서 멈춤) → 선택 재개 → 초안 + 이력 저장."""
+    """로그인 → 인터뷰(HITL ⓪) → 추천(HITL ①에서 멈춤) → 선택 재개 → 초안 + 이력 저장."""
     from langgraph.checkpoint.memory import InMemorySaver
     from langgraph.types import Command
 
-    from app.graphs.proposal import build_graph
+    from backend.graphs.proposal import build_graph
 
     monkeypatch.setattr(config, "SQLITE_PATH", db)
     monkeypatch.setattr(config, "llm_enabled", lambda: False)
+    monkeypatch.setattr(config, "EMBEDDING_PROVIDER", "keyword")  # .env가 bge여도 모델 로드 없이
     graph = build_graph(InMemorySaver())
     cfg = {"configurable": {"thread_id": "e2e"}}
     profile = repo.login("C001", "1", db)["profile"]
 
-    state = graph.invoke({"company_profile": profile}, cfg)
+    graph.invoke({"company_profile": profile}, cfg)
+    assert graph.get_state(cfg).next == ("interview",)
+    state = graph.invoke(Command(resume={"answers": {}}), cfg)  # 전부 건너뜀 → 기본값
     assert len(state["recommendations"]) == 10 and state["rag_status"] == "rule_only"
+    assert state["verification"] == {"status": "skipped", "reason": "LLM 키 없음", "checked": 5, "changed": False}
+    assert state["search"]["path"] == "keyword_fallback" and state["recommendations"][0]["llm"] is None
     assert graph.get_state(cfg).next == ("select_tender",)
 
     pick = state["recommendations"][0]["bidNtceNo"]

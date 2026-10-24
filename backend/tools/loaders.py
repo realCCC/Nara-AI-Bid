@@ -4,7 +4,7 @@ import json
 from functools import lru_cache
 from pathlib import Path
 
-from app import config
+from backend import config
 
 # 발주처 담당자 개인정보 — 로드 시 제거 (2번 문서 보안 제약)
 PII_FIELDS = ("ntceInsttOfclNm", "ntceInsttOfclTelNo", "ntceInsttOfclEmailAdrs", "exctvNm", "dminsttOfclEmailAdrs")

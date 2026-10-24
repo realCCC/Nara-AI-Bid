@@ -8,7 +8,7 @@ from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 
-from app import config
+from backend import config
 
 SCHEMA = Path(__file__).with_name("schema.sql")
 # 컬럼으로 분리하는 시드 필드. 나머지는 profile_json

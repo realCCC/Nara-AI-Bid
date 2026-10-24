@@ -10,3 +10,4 @@ data/pdfs/
 data/chroma/
 data/app.db
 outputs/
+data/emb_cache.npz

@@ -139,6 +139,33 @@
   .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #c9d6f5; border-top-color: var(--primary); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -2px; margin-right: 6px; }
   @keyframes spin { to { transform: rotate(360deg); } }
   .flag { color: var(--warn); font-size: 12px; margin-top: 6px; }
+
+  /* 고도화: 인터뷰 · 배지 · rule/llm 영역 · 점수표 */
+  :root { --llm: #7c3aed; --llm-soft: #f3edff; }
+  .tag.llm { background: var(--llm-soft); color: var(--llm); }
+  .tag.danger { background: var(--danger-soft); color: var(--danger); }
+  .q { border-top: 1px solid var(--line); padding: 12px 0; }
+  .q:first-of-type { border-top: none; }
+  .q .q-title { font-weight: 700; font-size: 14px; }
+  .q .opts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  .q .opts label { border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px; cursor: pointer; font-size: 13px; background: #fff; }
+  .q .opts input { display: none; }
+  .q .opts input:checked + span { color: var(--primary); font-weight: 700; }
+  .q .opts label:has(input:checked) { border-color: var(--primary); background: var(--primary-soft); }
+  .status-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 10px; font-size: 12px; }
+  .area { margin-top: 14px; border-radius: 12px; padding: 12px 14px; }
+  .area h5 { margin: 0 0 8px; font-size: 13px; display: flex; gap: 8px; align-items: center; }
+  .area.rule { background: #f8faff; border: 1px solid #dbe6ff; }
+  .area.rule h5 { color: var(--primary); }
+  .area.llm { background: #faf7ff; border: 1px solid #e4d8fb; }
+  .area.llm h5 { color: var(--llm); }
+  .area.llm .reason { border-left-color: var(--llm); background: #fff; }
+  .area.rule .reason { background: #fff; }
+  .score-table td, .score-table th { padding: 6px 8px; background: transparent; }
+  .score-table td.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .score-table tfoot td { font-weight: 700; border-bottom: none; }
+  .search-scores { font-size: 12px; color: var(--sub); margin-top: 8px; font-variant-numeric: tabular-nums; }
+  .verify-box { background: #fff; border: 1px dashed #c9b6f2; border-radius: 10px; padding: 8px 12px; margin-top: 8px; font-size: 13px; }
 </style>
 </head>
 <body>
@@ -211,7 +238,7 @@
         <div class="row" style="justify-content:space-between;">
           <div>
             <h2 class="page-title">맞춤 공고 추천</h2>
-            <p class="muted" style="margin:0;">룰로 자격을 거르고 상위 10건을 고른 뒤, 공고서 PDF를 읽어 순위와 근거를 만듭니다.</p>
+            <p class="muted" style="margin:0;">조건 인터뷰 → 룰로 자격을 거르고 검색·리랭크로 상위 10건을 고른 뒤, 공고서 PDF를 읽어 순위·근거를 만들고 상위 건을 검증합니다.</p>
           </div>
           <button class="btn primary" id="runBtn">추천 시작</button>
         </div>
@@ -224,6 +251,17 @@
         </div>
         <div class="bar"><div id="progressBar"></div></div>
         <p class="muted" id="progressText" style="margin:8px 0 0;">대기 중</p>
+        <div class="status-row hidden" id="statusRow"></div>
+      </div>
+
+      <div class="panel hidden" id="interviewCard" style="margin-top:16px;">
+        <h3 style="font-size:15px; color:var(--text);">추천 조건 인터뷰</h3>
+        <p class="muted" style="margin:0 0 6px;">문항마다 하나를 고르세요. 고르지 않으면 기본값 <b>전체</b>로 진행합니다.</p>
+        <div id="interviewBody"></div>
+        <div class="row" style="justify-content:flex-end; margin-top:10px;">
+          <button class="btn" id="skipInterviewBtn">모두 건너뛰기</button>
+          <button class="btn primary" id="submitInterviewBtn">이 조건으로 추천</button>
+        </div>
       </div>
 
       <div class="panel hidden" id="excludedCard" style="margin-top:16px;">
@@ -323,7 +361,8 @@ const show = step => {
 const enableTab = (step, on = true) => document.querySelector(`#tabs button[data-step="${step}"]`).disabled = !on;
 
 api("/api/status").then(s => {
-  $("modePill").textContent = s.llm ? "LLM 연결됨 · 공고 500건 파일" : "룰 모드 (Azure 키 없음) · 공고 500건 파일";
+  $("modePill").textContent = (s.llm ? "LLM 연결됨" : "룰 모드 (Azure 키 없음)") +
+    ` · 검색 ${s.embedding === "bge" ? "semantic" : "keyword_fallback"} · 공고 500건 파일`;
 }).catch(() => {});
 
 /* ---------- 1. 로그인 / 로그아웃 ---------- */
@@ -352,6 +391,8 @@ function resetRecommend() {
   $("resultList").innerHTML = "";
   $("resultCard").classList.add("hidden");
   $("excludedCard").classList.add("hidden");
+  $("interviewCard").classList.add("hidden");
+  $("statusRow").classList.add("hidden");
   $("runBtn").textContent = "추천 시작";
   $("runBtn").disabled = false;
   $("progressBar").style.width = "0%";
@@ -400,33 +441,91 @@ function setStage(id, value, cls) {
   el.classList.remove("done", "active");
   if (cls) el.classList.add(cls);
 }
-const RAG_LABEL = { rag: "건", rule_only: "룰 순위 (LLM 미연결)", rule_fallback: "룰 순위로 대체", no_candidates: "후보 없음" };
+const RAG_LABEL = { llm: "건", rule_only: "룰 순위 (LLM 미연결)", rule_fallback: "룰 순위로 대체", no_candidates: "후보 없음" };
+const MODE_BADGE = { llm: '<span class="tag llm">llm</span>', rule_only: '<span class="tag gray">rule_only</span>',
+  rule_fallback: '<span class="tag warn">rule_fallback</span>', no_candidates: '<span class="tag gray">후보 없음</span>' };
+let lastAnswers = {};  // 초안 생성 후 같은 조건으로 새 작업을 만들 때 재사용
 
-async function runRecommend() {
+// 추천 시작 → 인터뷰 문항(HITL ⓪)
+async function startRecommend() {
   const r = await api(withToken("/api/recommend"), { method: "POST" });
-  state = { threadId: r.thread_id, recs: r.recommendations, selected: null, done: false, running: false };
+  state = { threadId: r.thread_id, recs: [], selected: null, done: false, running: false, result: null };
   return r;
 }
+// 인터뷰 답변 → 추천 결과(HITL ①에서 멈춤)
+async function answerInterview(answers) {
+  const r = await api("/api/interview", { method: "POST",
+    body: JSON.stringify({ token: session.token, thread_id: state.threadId, answers }) });
+  state.recs = r.recommendations;
+  state.result = r;
+  return r;
+}
+async function runRecommend() { await startRecommend(); return answerInterview(lastAnswers); }
+
+function renderInterview(questions) {
+  const opt = (q, o, type) => `<label title="${esc((o.keywords || []).join(", "))}"><input type="${type}" name="q_${esc(q.id)}"
+    value="${esc(o.value)}" ${type === "radio" && o.value === "all" ? "checked" : ""}><span>${esc(o.label)}</span></label>`;
+  const multi = q => {  // 업체 키워드별로 묶어서 체크박스
+    const groups = {};
+    q.options.forEach(o => (groups[o.group] = groups[o.group] || []).push(o));
+    return Object.entries(groups).map(([g, os]) =>
+      `<div class="opts"><span class="tag gray">${esc(g)}</span>${os.map(o => opt(q, o, "checkbox")).join("")}</div>`).join("");
+  };
+  $("interviewBody").innerHTML = questions.map(q => `
+    <div class="q">
+      <div class="q-title">${esc(q.title)} <span class="muted" style="font-weight:400;">· ${esc(q.desc)}</span></div>
+      ${q.type === "multi" ? multi(q) : `<div class="opts">${q.options.map(o => opt(q, o, "radio")).join("")}</div>`}
+    </div>`).join("");
+  $("interviewCard").classList.remove("hidden");
+}
+const collectAnswers = () => {
+  const out = {};
+  document.querySelectorAll("#interviewBody input:checked").forEach(i => {
+    const k = i.name.slice(2);
+    if (i.type === "checkbox") (out[k] = out[k] || []).push(i.value);
+    else out[k] = i.value === "all" ? null : i.value;
+  });
+  return out;
+};
 
 $("runBtn").onclick = async () => {
   if (state.running) return;
   resetRecommend();
   state.running = true;
   $("runBtn").disabled = true;
+  $("progressText").innerHTML = '<span class="spinner"></span>인터뷰 문항 준비 중';
+  try {
+    const r = await startRecommend();
+    renderInterview(r.questions);
+    $("progressText").textContent = "추천 조건을 고른 뒤 [이 조건으로 추천]을 누르세요.";
+  } catch (e) {
+    $("progressText").textContent = "오류: " + e.message;
+    $("runBtn").disabled = false;
+  } finally {
+    state.running = false;
+  }
+};
+
+async function submitInterview(answers) {
+  if (state.running || !state.threadId) return;
+  state.running = true;
+  lastAnswers = answers;
+  $("interviewCard").classList.add("hidden");
   setStage("st1", "…", "active");
   $("progressBar").style.width = "30%";
-  $("progressText").innerHTML = '<span class="spinner"></span>하드 필터 → 소프트 점수 → RAG 순위 생성 중 (LLM 연결 시 PDF 다운로드로 1~2분 걸릴 수 있습니다)';
+  $("progressText").innerHTML = '<span class="spinner"></span>하드 필터 → 검색·리랭크 → RAG 순위 → 검증 중 (LLM 연결 시 PDF 다운로드로 1~2분 걸릴 수 있습니다)';
   try {
-    const r = await runRecommend();
-    const f = r.funnel;
+    const r = await answerInterview(answers);
+    const f = r.funnel, isLlm = r.rag_status === "llm";
     setStage("st1", f.total, "done");
     setStage("st2", f.pdf, "done");
     setStage("st3", f.hard_pass, "done");
     setStage("st4", f.top, "done");
-    setStage("st5", r.rag_status === "rag" ? r.recommendations.length : "–", r.rag_status === "rag" ? "done" : "");
+    setStage("st5", isLlm ? r.recommendations.length : "–", isLlm ? "done" : "");
     $("st5Label").textContent = RAG_LABEL[r.rag_status] || "건";
     $("progressBar").style.width = "100%";
-    $("progressText").textContent = r.rag_status === "rag" ? "출처 대조 완료" : "룰 추천 완료 — Azure 키를 입력하면 RAG 순위·근거가 추가됩니다";
+    $("progressText").textContent = isLlm ? "출처 대조 완료" : "룰 추천 완료 — Azure 키를 입력하면 RAG 순위·근거·검증이 추가됩니다";
+    renderStatus(r);
     $("excludedBody").innerHTML = r.rule_counts.map(x =>
       `<tr><td>${esc(x.rule)}</td><td>${esc(x.desc)}</td><td style="text-align:right;">${x.count}</td></tr>`).join("");
     $("excludedCard").classList.remove("hidden");
@@ -439,11 +538,63 @@ $("runBtn").onclick = async () => {
     state.running = false;
     $("runBtn").disabled = false;
   }
-};
+}
+$("submitInterviewBtn").onclick = () => submitInterview(collectAnswers());
+$("skipInterviewBtn").onclick = () => submitInterview({});
+
+// 실행 경로 · 검증 상태 배지
+function renderStatus(r) {
+  const s = r.search || {}, v = r.verification;
+  const ans = Object.entries(r.interview?.answers || {}).map(([k, v]) => [k, Array.isArray(v) ? v.join("·") : v]);
+  const sem = s.semantic || {}, iv = r.interview || {};
+  const vTag = !v ? "" : v.status === "passed"
+    ? `<span class="tag ok">검증 통과</span><span class="muted">상위 ${v.checked}건 재평가${v.changed ? " · 순위 조정됨" : " · 순위 유지"}</span>`
+    : `<span class="tag warn">검증 생략 (원순위 유지)</span><span class="muted">사유: ${esc(v.reason)}</span>`;
+  $("statusRow").innerHTML = `
+    <span class="muted">분석</span>${MODE_BADGE[r.rag_status] || esc(r.rag_status)}
+    <span class="muted">· 검색</span><span class="tag ${s.path === "semantic" ? "ok" : "gray"}">${esc(s.path || "-")}</span>
+    <span class="tag ${s.rerank === "applied" ? "ok" : "gray"}">리랭크 ${s.rerank === "applied" ? "적용" : "생략"}</span>
+    <span class="muted">· ${vTag ? "" : "검증 -"}</span>${vTag}
+    <div style="flex-basis:100%;" class="muted">키워드 의미 매칭(S2):
+      ${sem.used ? `<span class="tag ok">BGE-M3</span> ${esc((sem.keywords || []).join(", "))}` : `<span class="tag gray">문자열 일치만</span> ${esc(sem.reason || "")}`}
+      ${iv.focus ? ` · 주력 분야 <b>${esc(iv.focus.label)}</b>` : ""}
+      ${(iv.expanded || []).length ? ` · 확장어 ${iv.expanded.map(e => `${esc(e.term)}(←${esc(e.group)})`).join(", ")}` : ""}</div>
+    <div style="flex-basis:100%;" class="muted">검색 문장(${({ llm: "LLM 생성", interview: "인터뷰 주력 분야", template: "템플릿" })[s.query_source] || "-"}): ${esc(s.query || "-")}
+      ${s.path !== "semantic" && s.reason ? ` · ${esc(s.reason)}` : ""}${s.rerank !== "applied" && s.rerank_reason ? ` · 리랭크 생략: ${esc(s.rerank_reason)}` : ""}</div>
+    ${ans.length ? `<div style="flex-basis:100%;" class="muted">인터뷰 반영: ${ans.map(([k, v]) => `<span class="tag">${esc(k)}=${esc(v)}</span>`).join("")}</div>` : ""}`;
+  $("statusRow").classList.remove("hidden");
+}
 
 function reasonSrc(r) {
   return r.source_type === "pdf" ? `PDF · ${esc(r.file)} p.${esc(r.page)}` : `필드 · ${esc(r.field)} = ${esc(r.value || "(없음)")}`;
 }
+
+const fmt = (v, d = 3) => v == null ? "-" : Number(v).toFixed(d).replace(/\.?0+$/, "");
+function scoreTable(detail) {
+  if (!detail) return "";
+  const rows = detail.items.map(it => {
+    const w = it.weight == null ? "가점" : it.interview && it.base_weight != null && Math.abs(it.weight - it.base_weight) > 1e-9
+      ? `${fmt(it.base_weight)} → <b>${fmt(it.weight)}</b>` : fmt(it.weight);
+    return `<tr><td>${esc(it.item)}${it.interview ? ' <span class="tag warn">인터뷰 반영</span>' : ""}</td>
+      <td class="num">${fmt(it.score)}</td><td class="num">${w}</td><td class="num">${fmt(it.points, 1)}</td>
+      <td class="muted">${esc(it.reason)}</td></tr>`;
+  }).join("");
+  return `<table class="score-table"><thead><tr><th>항목</th><th style="text-align:right;">점수</th>
+    <th style="text-align:right;">가중치</th><th style="text-align:right;">반영</th><th>이유</th></tr></thead>
+    <tbody>${rows}</tbody><tfoot><tr><td>합산</td><td></td><td></td><td class="num">${fmt(detail.total, 1)}</td>
+    <td class="muted">Σ 점수 × 가중치 × 100${detail.items.some(x => x.key === "B1") ? " + 가점" : ""}</td></tr></tfoot></table>`;
+}
+function searchScores(s) {
+  if (!s) return "";
+  return `<div class="search-scores">검색 단계 · 룰 순위 ${s.rule_rank ?? "-"}위 · dense ${fmt(s.dense, 4)} · BM25 ${fmt(s.bm25, 2)}
+    · RRF ${fmt(s.rrf, 5)} · rerank ${fmt(s.rerank, 4)}</div>`;
+}
+const reasonList = rs => (rs || []).map(r => `
+  <div class="reason">
+    <div>${esc(r.text)}</div>
+    ${r.quote ? `<div class="quote">“${esc(r.quote)}”</div>` : ""}
+    <div class="src">출처: ${reasonSrc(r)}</div>
+  </div>`).join("");
 
 function renderResults() {
   const list = $("resultList");
@@ -459,7 +610,8 @@ function renderResults() {
     const status = isSel ? '<span class="tag ok">선택됨</span>'
       : weak ? '<span class="tag warn">근거 부족</span>'
       : t.source === "rag" ? '<span class="tag">RAG 근거</span>' : '<span class="tag gray">룰 근거</span>';
-    const s = t.scores || {};
+    const rule = t.rule || { reasons: t.reasons, score_detail: t.score_detail }, L = t.llm, V = t.verify;
+    const rankMove = V && V.rank_before !== t.rank ? ` <span class="tag llm">검증 ${V.rank_before}위→${t.rank}위</span>` : "";
     return `
     <article class="rec ${isSel ? "selected" : ""}">
       <div class="rec-top">
@@ -468,8 +620,7 @@ function renderResults() {
           <div>
             <h4>${esc(t.bidNtceNm)}</h4>
             <div class="meta">공고번호 ${esc(t.bidNtceNo)} · 예산 ${won(t.budget)}</div>
-            <div class="meta">업종 ${s.S1 ?? "-"} · 키워드 ${s.S2 ?? "-"} · 예산 규모 ${s.S3 ?? "-"} · 계약방식 ${s.S4 ?? "-"}</div>
-            <div style="margin-top:6px;">${status}</div>
+            <div style="margin-top:6px;">${status}${rankMove}</div>
           </div>
         </div>
         <div class="score">
@@ -477,16 +628,22 @@ function renderResults() {
           <div class="lbl">룰 점수</div>
         </div>
       </div>
-      <div class="reasons">
-        ${(t.reasons || []).map(r => `
-          <div class="reason">
-            <div>${esc(r.text)}</div>
-            ${r.quote ? `<div class="quote">“${esc(r.quote)}”</div>` : ""}
-            <div class="src">출처: ${reasonSrc(r)}</div>
-          </div>`).join("")}
-        ${(t.qualification_flags || []).map(f => `<div class="flag">⚠ ${esc(f)}</div>`).join("")}
-        ${weak ? `<p class="note-excluded">※ 공고서 PDF 근거가 부족해 룰 근거를 함께 표시합니다.</p>` : ""}
+      <div class="area rule">
+        <h5><span class="tag">rule</span> 룰 분석 — 점수 근거</h5>
+        ${scoreTable(rule.score_detail)}
+        ${searchScores(t.search)}
+        <div class="reasons">${reasonList(rule.reasons)}</div>
       </div>
+      ${L ? `
+      <div class="area llm">
+        <h5><span class="tag llm">llm</span> LLM 분석 — 공고서 근거 (출처 대조 통과 ${L.reasons.length}개${L.dropped ? ` · 대조 실패 ${L.dropped}개 숨김` : ""})</h5>
+        <div class="reasons">${L.reasons.length ? reasonList(L.reasons) : '<div class="muted">출처가 확인된 LLM 근거가 없습니다.</div>'}</div>
+        ${(L.qualification_flags || []).map(f => `<div class="flag">⚠ ${esc(f)}</div>`).join("")}
+        ${weak ? `<p class="note-excluded">※ 공고서 PDF 근거가 부족합니다.</p>` : ""}
+        ${V ? `<div class="verify-box"><b>검증 서브에이전트</b> · 적합도 ${esc(V.fit_score)}점 · 원순위 ${esc(V.rank_before)}위<div class="muted">${esc(V.comment)}</div></div>` : ""}
+      </div>` : `
+      <div class="area llm"><h5><span class="tag llm">llm</span> LLM 분석</h5>
+        <div class="muted">${state.result?.rag_status === "rule_fallback" ? "LLM 출력 검증에 실패해 룰 결과만 표시합니다 (rule_fallback)." : "LLM 미연결 — 룰 결과만 표시합니다 (rule_only)."}</div></div>`}
       <div class="rec-foot">
         <button class="btn ${isSel ? "" : "primary"}" data-pick="${esc(t.bidNtceNo)}" ${isSel ? "disabled" : ""}>${isSel ? "선택 완료" : "이 공고 선택"}</button>
       </div>
