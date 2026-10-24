@@ -11,10 +11,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from pydantic import ValidationError  # noqa: E402
 
-from app import config  # noqa: E402
-from app.schemas import CompanySeed  # noqa: E402
-from app.tools.loaders import load_company_file, load_region_limits, load_tenders  # noqa: E402
-from app.tools.rules import recommend_by_rules  # noqa: E402
+from backend import config  # noqa: E402
+from backend.schemas import CompanySeed  # noqa: E402
+from backend.tools.loaders import load_company_file, load_region_limits, load_tenders  # noqa: E402
+from backend.tools.rules import recommend_by_rules  # noqa: E402
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()

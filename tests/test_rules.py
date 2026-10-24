@@ -1,6 +1,6 @@
 """하드 필터 규칙 단위 테스트."""
-from app.tools.evidence import check_reason
-from app.tools.rules import hard_filter, soft_score
+from backend.tools.evidence import check_reason
+from backend.tools.rules import hard_filter, soft_score
 
 COMPANY = {
     "업체ID": "C999", "중소기업여부": True, "소재지": "서울",

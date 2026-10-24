@@ -1,5 +1,5 @@
 {
   "dependencies": ["."],
-  "graphs": {"proposal": "./app/graphs/proposal.py:graph"},
+  "graphs": {"proposal": "./backend/graphs/proposal.py:graph"},
   "env": ".env"
 }

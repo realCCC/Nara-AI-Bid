@@ -1,6 +1,6 @@
 """PoC 서버: 화면(frontend/index.html) + API. 그래프는 프로세스 내 checkpointer로 HITL에서 멈췄다 재개한다.
 
-실행: uv run uvicorn app.server:app --port 8000  → http://localhost:8000
+실행: uv run uvicorn backend.server:app --port 8000  → http://localhost:8000
 """
 import uuid
 from pathlib import Path
@@ -11,12 +11,12 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 from pydantic import BaseModel
 
-from app import config
-from app.db import repository as repo
-from app.graphs.proposal import build_graph
-from app.tools.loaders import tenders_by_no
-from app.tools.proposal import to_download_html
-from app.tools.rules import RULE_LABELS, RULES
+from backend import config
+from backend.db import repository as repo
+from backend.graphs.proposal import build_graph
+from backend.tools.loaders import tenders_by_no
+from backend.tools.proposal import to_download_html
+from backend.tools.rules import RULE_LABELS, RULES
 
 ROOT = Path(__file__).resolve().parent.parent
 app = FastAPI(title="나라장터 AI 입찰 어시스턴트 PoC")
@@ -30,6 +30,12 @@ SESSIONS: dict[str, str] = {}
 class LoginIn(BaseModel):
     company_id: str
     password: str
+
+
+class InterviewIn(BaseModel):
+    token: str
+    thread_id: str
+    answers: dict[str, str | list[str] | None] = {}  # 건너뛴 문항은 생략·null·빈 목록 → 기본값 "전체"
 
 
 class SelectIn(BaseModel):
@@ -76,27 +82,50 @@ def logout(token: str):
     return {"ok": True}
 
 
+def _owned(token: str, thread_id: str) -> dict:
+    company = _company(token)
+    snapshot = graph.get_state(_cfg(thread_id))
+    if not snapshot.values or snapshot.values["company_profile"]["업체ID"] != company["업체ID"]:
+        raise HTTPException(404, "작업을 찾을 수 없습니다. 추천을 다시 실행하세요.")
+    return company
+
+
 @app.post("/api/recommend")
 def recommend(token: str):
+    """추천 시작 → 인터뷰(HITL ⓪)에서 멈추고 객관식 문항을 돌려준다."""
     company = _company(token)
     thread_id = uuid.uuid4().hex
-    state = graph.invoke({"company_profile": company}, _cfg(thread_id))  # HITL ①에서 멈춤
+    graph.invoke({"company_profile": company}, _cfg(thread_id))
+    tasks = graph.get_state(_cfg(thread_id)).tasks
+    questions = next((i.value["questions"] for t in tasks for i in t.interrupts), [])
+    return {"thread_id": thread_id, "questions": questions}
+
+
+@app.post("/api/interview")
+def answer_interview(body: InterviewIn):
+    """인터뷰 답변으로 재개 → 추천 Worker·RAG·검증 → HITL ①에서 멈춤."""
+    _owned(body.token, body.thread_id)
+    if graph.get_state(_cfg(body.thread_id)).next != ("interview",):
+        raise HTTPException(409, "이미 답변한 인터뷰입니다. 추천을 다시 실행하세요.")
+    state = graph.invoke(Command(resume={"answers": {k: v for k, v in body.answers.items() if v}}), _cfg(body.thread_id))
     log = state["filter_log"]
+    prefs = state["prefs"]
     return {
-        "thread_id": thread_id,
+        "thread_id": body.thread_id,
         "funnel": log["funnel"],
         "rule_counts": [{"rule": RULE_LABELS[r], "desc": RULES[r], "count": n} for r, n in log["rule_counts"].items()],
+        "interview": {"answers": prefs["answers"], "weights": prefs["weights"], "base_weights": prefs["base_weights"],
+                      "focus": prefs["focus"], "expanded": prefs["expanded"]},
+        "search": state.get("search"),
         "rag_status": state.get("rag_status"),
+        "verification": state.get("verification"),
         "recommendations": state.get("recommendations", []),
     }
 
 
 @app.post("/api/select")
 def select(body: SelectIn):
-    company = _company(body.token)
-    snapshot = graph.get_state(_cfg(body.thread_id))
-    if not snapshot.values or snapshot.values["company_profile"]["업체ID"] != company["업체ID"]:
-        raise HTTPException(404, "작업을 찾을 수 없습니다. 추천을 다시 실행하세요.")
+    _owned(body.token, body.thread_id)
     try:
         state = graph.invoke(Command(resume=body.bidNtceNo), _cfg(body.thread_id))
     except ValueError as e:

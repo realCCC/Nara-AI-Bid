@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app import config  # noqa: E402
+from backend import config  # noqa: E402
 
 missing = [k for k in config.AZURE_KEYS if not os.getenv(k)]
 if missing:
