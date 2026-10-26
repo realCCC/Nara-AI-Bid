@@ -29,7 +29,7 @@ LangGraph 그래프 하나(`backend/graphs/proposal.py`)가 규칙 기반 Superv
 | ⓪ 맞춤 인터뷰 | **AI** · HITL | LLM이 업체정보로 문항·선택지를 만든다. 선택지마다 정해진 효과(예산·가중치·지역·일정·주력 분야·확장어·제외어) 하나만 붙고 코드가 검증한다. 마지막 자유 입력은 LLM이 같은 효과로 해석 | `tools/interview.py` |
 | ① 자격 필터 | 룰 | PDF 보유·업종·참가 제한·지역·예산(H1~H6) + 인터뷰 조건(I1) | `tools/rules.py` |
 | ② 소프트 점수 | 룰 + **AI** | S1 업종 · S2 역량 키워드(문자열 일치와 BGE-M3 의미 유사도 중 큰 값) · S3 예산 규모 · S4 선호 계약방식 | `tools/rules.py`, `tools/search.py` |
-| ③ 의미 검색·리랭크 | **AI** | LLM이 쓴 검색 문장으로 dense(BGE-M3) + BM25 + 룰 순위를 RRF로 합치고 bge-reranker로 재정렬 → 상위 10건 | `graphs/recommend.py` |
+| ③ 의미 검색·리랭크 | **AI** | LLM이 쓴 검색 문장으로 dense(BGE-M3) + BM25 + 룰 순위를 RRF로 합치고 bge-reranker로 상위 15건 재정렬 → 상위 10건 | `graphs/recommend.py` |
 | ④ 공고서 근거 순위 (RAG) | **AI** | 상위 10건 공고서 PDF 청크를 읽고 LLM이 순위·근거를 매김. 근거 인용은 원문과 대조해 통과한 것만 표시 | `graphs/proposal.py`, `tools/evidence.py` |
 | ⑤ 추천 검증 | **AI** | 검증 서브에이전트가 상위 5건 적합도를 재평가하고 순위를 조정 (실패하면 원순위 유지) | `tools/llm.py` |
 | ⑥ 담당자 확인 체크리스트 | **AI** · HITL | 공고 필드 조건 + LLM이 공고서에서 뽑은 참가자격·실적·제출서류·일정(원문 대조) + AI 자격 의심 사항. 전부 체크해야 선택 확정, 이력에 저장 | `tools/checklist.py` |
@@ -92,18 +92,21 @@ backend/
   db/                  schema.sql, repository.py (SQLite)
   templates/           proposal.html.j2 (제안서 초안)
 frontend/index.html    화면 (로그인 → 맞춤 추천 → 공고 선택 → 제안서 초안 → 이전 작업)
+POC_예시_html/         초기 화면 시안 (poc_screen.html)
 scripts/               run_demo.py · seed_companies.py · check_env.py · validate_data.py
-tests/                 룰·최소 실행 경로·DB·그래프 E2E·인터뷰·의미 프로필·체크리스트
-data/                  공고 원본·업체 JSON·지역 제한·SQLite·벡터 캐시
+tests/                 룰·최소 실행 경로·DB·그래프 E2E·인터뷰·의미 프로필·체크리스트 (53건)
+data/                  공고 원본·업체 JSON·지역 제한·SQLite·벡터 캐시·샘플(sample/)
+공고파일/               공공데이터포털에서 받은 공고 500건 원본 (→ data/raw/ 사본)
+docs/                  1~7 단계 문서
 ```
 
 ## 📅 일정 (8주, 하루 1-2시간, 2026-09-28 시작)
 
-| Phase | 기간 | 내용 | 상태 (10/24 기준) |
+| Phase | 기간 | 내용 | 상태 (10/26 기준) |
 |-------|-----|------|------|
 | 기획 | 1-2주 (09/28-10/11) | 1-4번 문서, 멘토 피드백 | 완료 |
 | 1 기초 구축 | 3-4주 (10/12-10/25) | 개발 환경, 공고 500건·업체 데이터 준비, 하드 필터·소프트 점수(최소 실행 경로) | 완료 |
-| 2 Agent 구현 | 5주 (10/26-11/01) | PDF 청킹·임베딩, RAG 추천·출처 대조, HITL ①, 초안 템플릿 연결, SQLite 이력 저장 | 앞당겨 구현 (+ AI 인터뷰·의미 프로필·검증·체크리스트) |
+| 2 Agent 구현 | 5주 (10/26-11/01) | PDF 청킹·임베딩, RAG 추천·출처 대조, HITL ①, 초안 템플릿 연결, SQLite 이력 저장 | 진행 중 · 핵심 기능 앞당겨 구현 완료 (+ AI 인터뷰·의미 프로필·검증·체크리스트) |
 | 3 UI & 안정화 | 6주 (11/02-11/08) | 화면, 업체 50건 확장, 가중치 확정 후 라벨링 | 화면 개편 완료 · 업체 확장·라벨링 남음 |
 | 4 검증 & 평가 | 7-8주 (11/09-11/22) | KPI 측정, 최종 산출물 | 예정 |
 
@@ -114,7 +117,7 @@ uv sync                                        # Python 3.11 + 패키지 설치
 uv sync --extra rag                            # (선택) BGE-M3 임베딩·리랭커 — .env에 EMBEDDING_PROVIDER=bge
 uv run python scripts/seed_companies.py        # data/companies/*.json → data/app.db
 uv run uvicorn backend.server:app --port 8000  # 화면: http://localhost:8000 (C001~C010 / 비밀번호 1)
-uv run pytest                                  # 테스트 (실제 LLM은 호출하지 않음)
+uv run pytest                                  # 테스트 53건 (실제 LLM은 호출하지 않음)
 ```
 
 ```powershell
@@ -125,7 +128,7 @@ uv run python scripts/check_env.py                                  # Azure Open
 ```
 
 - Azure 키가 없으면 **룰 모드**로 동작합니다 (인터뷰 = 기본 문항, 추천 = 룰 순위·근거, 체크리스트 = 공고 필드·공통 항목, 평가항목 = 기술·가격 평가 비율 필드). `.env.example`을 `.env`로 복사해 키를 넣으면 AI 단계가 모두 켜지고, 상위 10건 공고서 PDF를 나라장터에서 내려받습니다(`FETCH_PDFS=1`).
-- `EMBEDDING_PROVIDER=keyword`(기본)면 의미 검색·리랭크 대신 키워드 검색으로 동작합니다. `bge`는 첫 실행에 공고 443건 벡터 계산(CPU 2-3분) 후 캐시를 씁니다.
+- `EMBEDDING_PROVIDER=keyword`(기본)면 의미 검색·리랭크 대신 키워드 검색으로 동작합니다. `bge`는 첫 실행에 공고 443건 벡터 계산(CPU 2-3분) 후 캐시를 씁니다. PDF 청크 검색까지 BGE-M3로 하려면 `CHUNK_EMBEDDING=1`(CPU에서는 추천 1회에 수 분).
 - 공고는 `data/raw/tenders_202605.json`(공고파일 폴더 사본)을 쓰며, 같은 공고번호의 변경 차수는 마지막 차수만 남기고 취소공고는 제외합니다 (500건 → 유효 443건).
 - 지역 제한 공고는 `data/region_limits.csv`에 허용 시·도를 적기 전까지 보수적으로 제외됩니다.
 
