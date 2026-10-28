@@ -1,7 +1,8 @@
 """담당자 확인 체크리스트 (HITL ①): AI가 공고서에서 확인할 조건을 뽑고, 담당자가 원문과 대조해 체크한다.
 
 항목 = 공고 필드에서 바로 나오는 조건(계약방식·지역 제한·중소기업 제한·마감) + LLM이 공고서 PDF에서 뽑은 조건
-(인용이 해당 페이지 청크에 있어야 통과) + 추천 단계에서 AI가 표시한 자격 의심 사항 + 근거 부족 안내.
+(인용이 해당 페이지 청크에 있어야 통과) + 추천 단계에서 AI가 표시한 자격 의심 사항 + 검증 에이전트가 찾은 불충족 조건
++ 근거 부족 안내.
 LLM이 없거나 못 뽑은 분류(참가자격·제출서류)는 공통 문구로 채운다.
 """
 from backend import config
@@ -46,7 +47,7 @@ def ai_items(tender: dict) -> list[dict]:
     from backend.tools.retrieval import retrieve
 
     chunks = tender_chunks(tender)
-    raw = llm.extract_checklist(tender, retrieve(chunks, QUERY, k=8)) if chunks else None
+    raw = llm.extract_checklist(tender, retrieve(chunks, QUERY, k=8, tender_no=no)) if chunks else None
     items = []
     for it in (raw or {}).get("items", [])[:MAX_AI_ITEMS]:
         ev = {"source_type": "pdf", "file": it.get("file"), "page": it.get("page"), "quote": it.get("quote")}
@@ -67,6 +68,9 @@ def build(tender: dict, rec: dict | None = None) -> dict:
     flags = rec.get("qualification_flags") or (rec.get("llm") or {}).get("qualification_flags") or []
     items += [{"category": "AI 확인 사항", "text": f"추천 단계에서 AI가 표시한 사항을 검토했습니다: {f}", "origin": "flag"}
               for f in flags]
+    items += [{"category": "AI 확인 사항", "text": f"검증 에이전트가 찾은 불충족 의심 조건을 검토했습니다: {i['text']}",
+               "origin": "verify", "evidence": {k: i.get(k) for k in ("source_type", "file", "page", "quote", "field", "value")}}
+              for i in (rec.get("verify") or {}).get("issues", [])]
     if rec.get("source") == "rag" and not rec.get("pdf_evidence"):
         items.append({"category": "AI 확인 사항", "text": "공고서 PDF 근거가 부족한 공고임을 알고 진행합니다", "origin": "flag"})
     order = {"참가자격": 0, "실적요건": 1, "제출서류": 2, "일정": 3, "기타": 4, "AI 확인 사항": 5}

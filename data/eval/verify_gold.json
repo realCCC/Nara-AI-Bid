@@ -1,0 +1,406 @@
+{
+ "C001": {
+  "회사명": "한빛이벤트 주식회사",
+  "tenders": [
+   {
+    "bidNtceNo": "R26BK01499922",
+    "bidNtceNm": "2026년 스마트팜연구개발사업단 연구성과발표회 및 국제 심포지엄 행사 지원 용역",
+    "label": "추천",
+    "reason": "연구성과발표회·국제 심포지엄 — 유사 실적 보유, 중소기업 한정 충족",
+    "label_by": "claude-reviewed"
+   },
+   {
+    "bidNtceNo": "R26BK01502151",
+    "bidNtceNm": "제4회 계양아라온 워터축제 진행 용역",
+    "label": "추천",
+    "reason": "축제 운영 — 행사대행업(9901)·중소기업 요건, 축제 실적 보유",
+    "label_by": "claude-reviewed"
+   },
+   {
+    "bidNtceNo": "R26BK01502671",
+    "bidNtceNm": "USG공유대학2.0 취업역량강화프로그램 및 USG직무박람회 운영 용역",
+    "label": "적격-비추천",
+    "reason": "취업역량강화 프로그램 비중이 커 행사 전문 업체 적합도 중간",
+    "label_by": "claude-reviewed"
+   },
+   {
+    "bidNtceNo": "R26BK01503290",
+    "bidNtceNm": "한미 어울림 축제 기획 및 운영",
+    "label": "추천",
+    "reason": "축제 기획·운영 — 지역제한(경기·서울) 충족(서울 소재)",
+    "label_by": "claude-reviewed"
+   },
+   {
+    "bidNtceNo": "R26BK01503314",
+    "bidNtceNm": "제21회 한미친선 한마음축제 기획 및 운영",
+    "label": "추천",
+    "reason": "축제 기획·운영 — 지역제한(경기·서울) 충족(서울 소재)",
+    "label_by": "claude-reviewed"
+   }
+  ]
+ },
+ "C002": {
+  "회사명": "미래정책연구원 주식회사",
+  "tenders": [
+   {
+    "bidNtceNo": "R26BK01499840",
+    "bidNtceNm": "2026년 진상조사사업 「해방 전‧후 중국지역 한인 명부를 통한 일제강제동원 형태 분석」 학술연구용역",
+    "label": "적격-비추천",
+    "reason": "역사 학술연구 — 실태조사·통계 분야와 거리",
+    "label_by": "claude-reviewed"
+   },
+   {
+    "bidNtceNo": "R26BK01501143",
+    "bidNtceNm": "직업기초능력평가 성인 대상 모의테스트 분석 및 수요 조사 연구 용역",
+    "label": "추천",
+    "reason": "모의테스트 분석·수요조사 — 학술연구용역(1169), 수요조사·분석 실적과 일치",
+    "label_by": "claude-reviewed"
+   },
+   {
+    "bidNtceNo": "R26BK01501392",
+    "bidNtceNm": "2026년 인천광역시 뿌리산업 실태조사 용역 입찰 공고",
+    "label": "추천",
+    "reason": "뿌리산업 실태조사 — 실태조사 실적과 일치, 중소기업 요건 충족",
+    "label_by": "claude-reviewed"
+   },
+   {
+    "bidNtceNo": "R26BK01502394",
+    "bidNtceNm": "제2차 충청북도 공공디자인 진흥계획 수립 용역",
+    "label": "부적격",
+    "reason": "공공디자인전문회사(6484)/산업디자인(4444) 업종 등록 필수 — 연구조사 업체 프로필에 없음",
+    "label_by": "claude-reviewed"
+   },
+   {
+    "bidNtceNo": "R26BK01502818",
+    "bidNtceNm": "마음EASY검사 효과성 분석 및 활성화 방안 연구",
+    "label": "적격-비추천",
+    "reason": "심리검사 효과성 분석 — 특화 분야, 소기업·소상공인 한정",
+    "label_by": "claude-reviewed"
+   }
+  ]
+ },
+ "C003": {
+  "회사명": "코드브릿지 주식회사",
+  "tenders": [
+   {
+    "bidNtceNo": "R26BK01498196",
+    "bidNtceNm": "온라인 웹서비스기반 통합결제시스템 구축",
+    "label": "추천",
+    "reason": "통합결제시스템 구축 — SW사업자(1468)·정보시스템개발 직접생산, 플랫폼 구축 실적",
+    "label_by": "claude-reviewed"
+   },
+   {
+    "bidNtceNo": "R26BK01501023",
+    "bidNtceNm": "국립장애인도서관 정보시스템 서비스 고도화",
+    "label": "추천",
+    "reason": "정보시스템 고도화 — SW사업자·중소기업 요건, 고도화 실적",
+    "label_by": "claude-reviewed"
+   },
+   {
+    "bidNtceNo": "R26BK01501042",
+    "bidNtceNm": "2026년 국립대학육성사업 AI 기반 학생경력개발관리 통합플랫폼 구축 용역",
+    "label": "추천",
+    "reason": "통합플랫폼 구축 — 플랫폼 구축 실적과 일치",
+    "label_by": "claude-reviewed"
+   },
+   {
+    "bidNtceNo": "R26BK01501368",
+    "bidNtceNm": "2026년 공주시 공공데이터 및 데이터기반행정 활성화 사업[협상]",
+    "label": "적격-비추천",
+    "reason": "소기업·소상공인 한정 + 데이터처리/빅데이터 직접생산 필요 — 확인 필요",
+    "label_by": "claude-reviewed"
+   },
+   {
+    "bidNtceNo": "R26BK01502729",
+    "bidNtceNm": "식품안전 디지털 유통망 구축(3차)",
+    "label": "추천",
+    "reason": "유통망 시스템 구축 — 정보시스템 구축 분야 일치",
+    "label_by": "claude-reviewed"
+   }
+  ]
+ },
+ "C004": {
+  "회사명": "배움터에듀 주식회사",
+  "tenders": [
+   {
+    "bidNtceNo": "R26BK01500683",
+    "bidNtceNm": "2026. 청주온마을배움터 마을교육활동가 소양과정 및 역량강화연수 용역",
+    "label": "추천",
+    "reason": "마을교육활동가 연수 — 지역제한(충북) 충족, 동일 실적 보유",
+    "label_by": "claude-reviewed"
+   },
+   {
+    "bidNtceNo": "R26BK01501726",
+    "bidNtceNm": "[긴급] 2026 강동송파 중등 학교로 찾아가는 AI·디지털 기반 교육혁신 연수",
+    "label": "부적격",
+    "reason": "지역제한(서울특별시 본점) — 업체 소재지 충북",
+    "label_by": "claude-reviewed"
+   },
+   {
+    "bidNtceNo": "R26BK01502349",
+    "bidNtceNm": "2026년 국립항공박물관 특별교육 운영 용역",
+    "label": "적격-비추천",
+    "reason": "박물관 특화 교육 — 적합도 중간",
+    "label_by": "claude-reviewed"
+   },
+   {
+    "bidNtceNo": "R26BK01502518",
+    "bidNtceNm": "2026년 10·29이태원참사 유가족 공동체 회복 프로그램 위탁 운영",
+    "label": "적격-비추천",
+    "reason": "참사 유가족 공동체 회복 프로그램 — 교육 연수 분야와 거리",
+    "label_by": "claude-reviewed"
+   },
+   {
+    "bidNtceNo": "R26BK01502836",
+    "bidNtceNm": "2026년 미래인재 양성캠프 위탁운영 용역(협상에 의한 계약)",
+    "label": "추천",
+    "reason": "미래인재 캠프 운영 — 교육 프로그램 운영 분야 일치",
+    "label_by": "claude-reviewed"
+   }
+  ]
+ },
+ "C005": {
+  "회사명": "청정자원 주식회사",
+  "tenders": [
+   {
+    "bidNtceNo": "R26BK01498611",
+    "bidNtceNm": "노은대덕2리(리도202호선)도로확포장공사폐기물처리용역",
+    "label": "부적격",
+    "reason": "지역제한(충청북도) — 업체 소재지 강원",
+    "label_by": "claude-reviewed"
+   },
+   {
+    "bidNtceNo": "R26BK01501221",
+    "bidNtceNm": "양구군 농촌폐기물종합처리장 보관 폐합성수지 위탁처리용역",
+    "label": "추천",
+    "reason": "폐합성수지 재활용 처리 — 지역제한(강원) 충족, 재활용 분야",
+    "label_by": "claude-reviewed"
+   },
+   {
+    "bidNtceNo": "R26BK01502110",
+    "bidNtceNm": "새만금상류 바이오순환림 조성사업(익산마을 1지구) 건설폐기물 처리용역",
+    "label": "부적격",
+    "reason": "지역제한(전북특별자치도 본점) — 업체 소재지 강원",
+    "label_by": "claude-reviewed"
+   },
+   {
+    "bidNtceNo": "R26BK01502535",
+    "bidNtceNm": "오관리 공영주차장 조성사업 추가 매입지 철거공사 건설폐기물처리용역(긴급) 전자입찰 공고",
+    "label": "부적격",
+    "reason": "지역제한(충청남도 본점) — 업체 소재지 강원",
+    "label_by": "claude-reviewed"
+   },
+   {
+    "bidNtceNo": "R26BK01502912",
+    "bidNtceNm": "인제군 남면 LPG배관망 구축사업 건설폐기물 처리용역",
+    "label": "추천",
+    "reason": "건설폐기물 처리 — 지역제한(강원) 충족, 건설폐기물 실적 보유",
+    "label_by": "claude-reviewed"
+   }
+  ]
+ },
+ "C006": {
+  "회사명": "온누리기획 주식회사",
+  "tenders": [
+   {
+    "bidNtceNo": "R26BK01492782",
+    "bidNtceNm": "2026년 문화체육관광부 우리함께 캠페인",
+    "label": "적격-비추천",
+    "reason": "동영상제작서비스 직접생산확인 필수 — 홍보 대행 업체로 영상 제작 실적 없음",
+    "label_by": "claude-reviewed",
+    "label_draft": "추천"
+   },
+   {
+    "bidNtceNo": "R26BK01501410",
+    "bidNtceNm": "2026년 부안 워케이션 프로그램 운영 용역",
+    "label": "적격-비추천",
+    "reason": "워케이션(여행 성격) 프로그램, 여행업/행사대행업 등록·직접생산 필요",
+    "label_by": "claude-reviewed"
+   },
+   {
+    "bidNtceNo": "R26BK01501429",
+    "bidNtceNm": "2026년 디지털노마드시티 인천 사업운영 용역",
+    "label": "추천",
+    "reason": "사업 운영 용역 — 사무국 운영 실적과 일치",
+    "label_by": "claude-reviewed"
+   },
+   {
+    "bidNtceNo": "R26BK01501899",
+    "bidNtceNm": "소상공인 해결사 지원사업 컨설팅 운영",
+    "label": "추천",
+    "reason": "컨설팅 운영 — 지역제한(부산) 충족, 사업 운영 실적",
+    "label_by": "claude-reviewed"
+   },
+   {
+    "bidNtceNo": "R26BK01502369",
+    "bidNtceNm": "(긴급) 2026년 지역상권 및 소상공인 활성화를 위한 홍보지원 사업",
+    "label": "적격-비추천",
+    "reason": "참가자격에 소상공인 홍보영상·네이버 클립·드론/4K 촬영 경력 요구 — 영상 실적 없음",
+    "label_by": "claude-reviewed",
+    "label_draft": "추천"
+   }
+  ]
+ },
+ "C007": {
+  "회사명": "그린환경연구소 주식회사",
+  "tenders": [
+   {
+    "bidNtceNo": "R26BK01500648",
+    "bidNtceNm": "액비순환 분뇨처리의 운전방식에 따른 탄소 저감 효과 실증 연구",
+    "label": "추천",
+    "reason": "탄소 저감 실증 연구 — 탄소·농업 연구 분야, 공공 연구 실적 요건",
+    "label_by": "claude-reviewed"
+   },
+   {
+    "bidNtceNo": "R26BK01501569",
+    "bidNtceNm": "충북 RE100 기본계획 수립 연구용역",
+    "label": "추천",
+    "reason": "RE100 기본계획 — 탄소중립 계획 실적과 일치(지역제한 없음)",
+    "label_by": "claude-reviewed"
+   },
+   {
+    "bidNtceNo": "R26BK01501604",
+    "bidNtceNm": "2026년 효율향상 투자사업 실적검증 및 절감량 산정 방법론 고도화",
+    "label": "추천",
+    "reason": "에너지 효율 실적검증 방법론 — 에너지 연구 분야",
+    "label_by": "claude-reviewed"
+   },
+   {
+    "bidNtceNo": "R26BK01502248",
+    "bidNtceNm": "생태복원형 국립휴양공원 지정을 위한 타당성조사 연구 용역",
+    "label": "적격-비추천",
+    "reason": "휴양공원 지정 타당성조사 — 환경·산림 연구와 일부만 겹침",
+    "label_by": "claude-reviewed"
+   },
+   {
+    "bidNtceNo": "R26BK01503102",
+    "bidNtceNm": "경기도 친환경차 자원순환 로드맵 연구",
+    "label": "추천",
+    "reason": "자원순환 로드맵 연구 — 환경 연구, 학술연구용역·중소기업 요건",
+    "label_by": "claude-reviewed"
+   }
+  ]
+ },
+ "C008": {
+  "회사명": "대한정보시스템 주식회사",
+  "tenders": [
+   {
+    "bidNtceNo": "R26BK01452614",
+    "bidNtceNm": "SAP 인프라 개선사업",
+    "label": "적격-비추천",
+    "reason": "공고서 본문 없음 — 20억 미만 SW·인프라 사업이면 대기업·중견 참여 제한 가능, 확인 필요",
+    "label_by": "claude-reviewed",
+    "label_draft": "추천"
+   },
+   {
+    "bidNtceNo": "R26BK01500914",
+    "bidNtceNm": "한국가스안전공사 전화통신시스템 고도화 사업",
+    "label": "적격-비추천",
+    "reason": "기간통신사업(1458)+정보통신공사업 등록 필요 — 확인 필요",
+    "label_by": "claude-reviewed"
+   },
+   {
+    "bidNtceNo": "R26BK01501068",
+    "bidNtceNm": "서특단 종합상황실 노후개선 고도화사업",
+    "label": "부적격",
+    "reason": "20억 미만 SW사업으로 대기업·중견 SW사업자 참여 불가 — 업체는 중소기업 아님",
+    "label_by": "claude-reviewed",
+    "label_draft": "추천"
+   },
+   {
+    "bidNtceNo": "R26BK01501563",
+    "bidNtceNm": "KTV 네트워크제작시스템(NPS) 인프라 장비 구매 설치",
+    "label": "부적격",
+    "reason": "중소기업·소상공인 확인서 필수 — 업체는 중소기업 아님",
+    "label_by": "claude-reviewed"
+   },
+   {
+    "bidNtceNo": "R26BK01502137",
+    "bidNtceNm": "APC 정보지원시스템 기능 고도화 용역",
+    "label": "부적격",
+    "reason": "중소기업·소상공인 확인서 필수 — 업체는 중소기업 아님",
+    "label_by": "claude-reviewed"
+   }
+  ]
+ },
+ "C009": {
+  "회사명": "하나로투어 주식회사",
+  "tenders": [
+   {
+    "bidNtceNo": "R26BK01488262",
+    "bidNtceNm": "신진과학기술고등학교 2026학년도 하계 글로벌 현장학습 위탁용역 입찰공고",
+    "label": "추천",
+    "reason": "해외 현장학습 위탁 — 여행업 등록, 수학여행 실적(일본 실적은 제출서류)",
+    "label_by": "claude-reviewed"
+   },
+   {
+    "bidNtceNo": "R26BK01497367",
+    "bidNtceNm": "2026학년도 산척초중학교 해외연수 위탁용역",
+    "label": "부적격",
+    "reason": "지역제한(충청북도) — 업체 소재지 광주",
+    "label_by": "claude-reviewed"
+   },
+   {
+    "bidNtceNo": "R26BK01501413",
+    "bidNtceNm": "2026학년도 충북대학교사범대학부설중학교 1학년 숙박형 현장체험학습(수련활동) 용역",
+    "label": "부적격",
+    "reason": "지역제한 + 충북 소재 청소년수련시설 등록 필수 — 여행사",
+    "label_by": "claude-reviewed"
+   },
+   {
+    "bidNtceNo": "R26BK01501947",
+    "bidNtceNm": "2026학년도 상계제일중학교 2학년 수련활동[2단계 규격.가격동시] 입찰 공고",
+    "label": "부적격",
+    "reason": "지역제한(서울·경기) + 청소년수련시설 등록 필수 — 업체 소재지 광주",
+    "label_by": "claude-reviewed"
+   },
+   {
+    "bidNtceNo": "R26BK01502029",
+    "bidNtceNm": "2026학년도 상계제일중학교 3학년 수련활동[2단계 규격.가격동시]입찰 공고",
+    "label": "부적격",
+    "reason": "지역제한(경기·강원) + 청소년수련시설 등록 필수 — 업체 소재지 광주",
+    "label_by": "claude-reviewed"
+   }
+  ]
+ },
+ "C010": {
+  "회사명": "픽셀앤스토리 주식회사",
+  "tenders": [
+   {
+    "bidNtceNo": "R26BK01492782",
+    "bidNtceNm": "2026년 문화체육관광부 우리함께 캠페인",
+    "label": "추천",
+    "reason": "정부 캠페인 — 동영상제작 직접생산 요건, 홍보 영상 제작 실적 보유",
+    "label_by": "claude-reviewed"
+   },
+   {
+    "bidNtceNo": "R26BK01501490",
+    "bidNtceNm": "2026년 한국수중발굴 50주년 특별전 전시연출 및 보조물 제작·설치",
+    "label": "적격-비추천",
+    "reason": "실내건축공사업(4990) 등록 필수 — 디자인 업체 보유 여부 확인 필요",
+    "label_by": "claude-reviewed"
+   },
+   {
+    "bidNtceNo": "R26BK01502287",
+    "bidNtceNm": "공공 AX 프로젝트 근로감독분과 과제 홍보물 제작 용역",
+    "label": "추천",
+    "reason": "홍보물 제작 — 디자인·영상 업종 중 하나, 유사 실적 보유",
+    "label_by": "claude-reviewed"
+   },
+   {
+    "bidNtceNo": "R26BK01502351",
+    "bidNtceNm": "2026 부산원아시아페스티벌 한류체험 팝업전시 디자인 기획 및 조성 용역",
+    "label": "부적격",
+    "reason": "지역제한(부산광역시 주된 영업소) — 업체 소재지 서울",
+    "label_by": "claude-reviewed"
+   },
+   {
+    "bidNtceNo": "R26BK01503349",
+    "bidNtceNm": "한‧프 수교 140주년 기념 특별전 전시연출 및 보조물 제작‧설치",
+    "label": "적격-비추천",
+    "reason": "실물모형 제조 등록·직접생산 필요 — 확인 필요",
+    "label_by": "claude-reviewed"
+   }
+  ]
+ }
+}

@@ -3,7 +3,7 @@ import numpy as np
 import pytest
 
 from backend import config
-from backend.graphs.proposal import apply_verification
+from backend.agents.verify import apply_verification, confirm_issues
 from backend.tools import llm, search
 from backend.tools import interview, keyword_profile
 from backend.tools.interview import boost_weights, interview_filter, to_prefs
@@ -80,7 +80,8 @@ IDS = ["T1", "T2", "T3"]
 
 
 def _result(order, items=None):
-    return {"order": order, "items": [{"bidNtceNo": i, "fit_score": 80, "comment": "c"} for i in (items or order)]}
+    return {"order": order,
+            "items": [{"bidNtceNo": i, "fit_score": 80, "comment": "c", "issues": []} for i in (items or order)]}
 
 
 def test_check_verify_failures():
@@ -93,7 +94,8 @@ def test_check_verify_failures():
 
 def test_apply_verification_keeps_order_on_failure():
     recs, v = apply_verification(RECS, None, "LLM 키 없음", 3)
-    assert recs == RECS and v == {"status": "skipped", "reason": "LLM 키 없음", "checked": 3, "changed": False}
+    assert recs == RECS and v == {"status": "skipped", "reason": "LLM 키 없음", "checked": 3, "changed": False,
+                                  "flagged": 0, "issues_dropped": 0}
 
 
 def test_apply_verification_reorders_head_only():
@@ -104,11 +106,64 @@ def test_apply_verification_reorders_head_only():
     assert v["status"] == "passed" and v["changed"]
 
 
+QUAL_CHUNKS = {"T1": [{"file": "공고.pdf", "page": 2, "text": "입찰참가자격: 공고일 현재 부산광역시에 본사를 둔 업체"}]}
+
+
+def _issue(**kw):
+    return {"type": "지역제한", "text": "부산 소재 업체만 참가 가능", "source_type": "pdf", "file": "공고.pdf", "page": 2,
+            "quote": "부산광역시에 본사를 둔 업체", "company_field": "company.소재지", "company_value": "서울", **kw}
+
+
+def test_confirm_issues_drops_unsourced():
+    result = _result(["T1", "T2", "T3"])
+    result["items"][0]["issues"] = [_issue(), _issue(quote="서울특별시에 본사를 둔 업체"), _issue(page=3),
+                                    _issue(company_field="company.면허", company_value="확인 불가"),
+                                    _issue(company_field="소재지", quote="부산광역시에 ... 둔 업체"),  # 접두어 생략·줄임표 인용 허용
+                                    _issue(quote="부산광역시에 ... 서울 업체")]
+    result["items"][1]["issues"] = [_issue(source_type="field", field="tender.rgnLmtBidLocplcJdgmBssNm", value="부산"),
+                                    _issue(company_value="")]
+    out, dropped = confirm_issues(result, {"T1": {}, "T2": {"rgnLmtBidLocplcJdgmBssNm": "부산광역시"}},
+                                  {"소재지": "서울"}, QUAL_CHUNKS)
+    assert [len(i["issues"]) for i in out["items"]] == [2, 1, 0] and dropped == 5
+
+
+def test_conflicts_only_qualification_fields():
+    from backend.agents.verify import _conflicts
+
+    company = {"소재지": "강원", "중소기업여부": False, "선호계약방식": ["제한경쟁"], "업종": {"대분류": ["연구조사서비스"]}}
+    assert _conflicts({"company_field": "company.소재지", "company_value": "강원"}, company)
+    assert _conflicts({"company_field": "중소기업여부", "company_value": "False"}, company)
+    assert _conflicts({"company_field": "company.업종", "company_value": "연구조사서비스"}, company)
+    assert not _conflicts({"company_field": "company.선호계약방식", "company_value": "제한경쟁"}, company)  # 선호는 자격 충돌 아님
+    assert not _conflicts({"company_field": "company.소재지", "company_value": "부산"}, company)
+    assert not _conflicts({"company_field": "중소기업여부", "company_value": "True"}, {"중소기업여부": True})  # '소기업 확인 불가' 오탐
+
+
+def test_apply_verification_demotes_flagged():
+    result = _result(["T1", "T2", "T3"])
+    result["items"][0]["issues"] = [_issue()]
+    recs, v = apply_verification(RECS, result, None, 3, dropped=1)
+    assert [r["bidNtceNo"] for r in recs] == ["T2", "T3", "T1", "T4", "T5", "T6"]
+    assert recs[2]["verify"]["issues"][0]["type"] == "지역제한"
+    assert v["changed"] and v["flagged"] == 1 and v["issues_dropped"] == 1
+
+
+def test_checklist_includes_verify_issues():
+    from backend.tools import checklist
+
+    made = checklist.build({"bidNtceNo": "X"}, {"verify": {"issues": [_issue()]}})
+    item = next(i for i in made["items"] if i["origin"] == "verify")
+    assert item["evidence"]["quote"] == "부산광역시에 본사를 둔 업체"
+
+
 class _FakeLLM:
     def __init__(self, out):
         self.out = out
 
     def with_structured_output(self, schema):
+        return self
+
+    def with_config(self, **kw):
         return self
 
     def invoke(self, prompt):
@@ -189,6 +244,82 @@ def test_semantic_with_reranker_failure(monkeypatch):
 def test_rrf():
     fused = search.rrf({"a": ["X", "Y"], "b": ["Y", "X"]})
     assert fused["X"] == pytest.approx(1 / 61 + 1 / 62) == pytest.approx(fused["Y"])
+
+
+# ---------- RAG 청크 하이브리드 검색 ----------
+CHUNKS = [{"file": "a.pdf", "page": 1, "text": "입찰 참가자격 제한 사항 안내"},
+          {"file": "a.pdf", "page": 2, "text": "축제 기획 및 행사 운영 과업"},
+          {"file": "a.pdf", "page": 3, "text": "도로 포장 공사 시방서"}]
+
+
+def test_chunk_search_bm25_only_without_embedding(monkeypatch):
+    import backend.tools.retrieval as retrieval
+
+    monkeypatch.setattr(config, "EMBEDDING_PROVIDER", "keyword")
+    out, path = retrieval.retrieve_for_company(CHUNKS, {"역량키워드": ["축제"]}, k=1, query="행사 운영", tender_no="T1")
+    assert path == "bm25" and all(c["match"]["dense"] is None for c in out)
+    assert "도로" not in " ".join(c["text"] for c in out)  # 키워드 겹침 없는 청크는 BM25만으로는 안 나온다
+
+
+def test_chunk_search_hybrid_caches_per_tender(monkeypatch, tmp_path):
+    import backend.tools.retrieval as retrieval
+
+    calls = []
+
+    class Model(_FakeModel):
+        def encode(self, texts, **kw):
+            calls.append(len(texts))
+            return super().encode(texts, **kw)
+
+    monkeypatch.setattr(config, "EMBEDDING_PROVIDER", "bge")
+    monkeypatch.setattr(config, "CHUNK_EMBEDDING", True)
+    monkeypatch.setattr(config, "CHUNK_VEC_DIR", tmp_path)
+    monkeypatch.setattr(retrieval, "_bge", lambda: Model())
+    out, path = retrieval.retrieve_for_company(CHUNKS, {"역량키워드": []}, k=1, query="행사 운영", tender_no="T1")
+    assert path == "hybrid" and (tmp_path / "T1.npz").exists()
+    assert all(c["match"]["dense"] is not None for c in out)
+    retrieval.chunk_vectors("T1", CHUNKS)  # 두 번째는 파일에서 읽기만
+    assert calls[0] == 3 and calls.count(3) == 1  # 청크 3개는 한 번만 임베딩 (나머지 호출은 질의 1개씩)
+
+
+def test_retrieve_reuses_saved_chunk_vectors(monkeypatch, tmp_path):
+    """검증·체크리스트·평가항목의 retrieve(tender_no=...)는 RAG가 저장한 공고별 청크 벡터를 다시 쓴다."""
+    import backend.tools.retrieval as retrieval
+    from backend.tools import search
+
+    calls = []
+
+    class Model(_FakeModel):
+        def encode(self, texts, **kw):
+            calls.append(len(texts))
+            return super().encode(texts, **kw)
+
+    monkeypatch.setattr(config, "EMBEDDING_PROVIDER", "bge")
+    monkeypatch.setattr(config, "CHUNK_EMBEDDING", True)
+    monkeypatch.setattr(config, "CHUNK_VEC_DIR", tmp_path)
+    monkeypatch.setattr(retrieval, "_bge", lambda: Model())
+    monkeypatch.setattr(search, "_VEC_CACHE", {})
+    retrieval.chunk_vectors("T1", CHUNKS)  # RAG 단계가 저장
+    calls.clear()
+    out = retrieval.retrieve(CHUNKS, "입찰 참가자격", k=2, tender_no="T1")
+    assert len(out) == 2 and calls == [1]  # 질의 1개만 임베딩, 청크는 파일에서 읽음
+    calls.clear()
+    retrieval.retrieve(CHUNKS, "입찰 참가자격 제출", k=2)  # tender_no 없으면 청크를 임베딩
+    assert 3 in calls
+
+
+def test_retrieve_falls_back_to_keywords_when_embedding_fails(monkeypatch, tmp_path):
+    import backend.tools.retrieval as retrieval
+
+    def broken():
+        raise RuntimeError("모델 로드 실패")
+
+    monkeypatch.setattr(config, "EMBEDDING_PROVIDER", "bge")
+    monkeypatch.setattr(config, "CHUNK_EMBEDDING", True)
+    monkeypatch.setattr(config, "CHUNK_VEC_DIR", tmp_path)
+    monkeypatch.setattr(retrieval, "_bge", broken)
+    out = retrieval.retrieve(CHUNKS, "입찰 참가자격", k=1, tender_no="T1")
+    assert out and "참가자격" in out[0]["text"]
 
 
 # ---------- 키워드 의미 확장 (인터뷰 주력 분야·유사 표현) ----------

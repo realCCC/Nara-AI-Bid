@@ -91,10 +91,24 @@ class NoteParse(BaseModel):
     min_prep_days: int | None = None
 
 
+class VerifyIssue(BaseModel):
+    type: Literal["지역제한", "참가자격", "실적요건", "일정", "기타"]
+    text: str = Field(description="업체가 이 조건을 충족하지 못할 수 있는 이유 1문장")
+    source_type: str = Field(description="pdf 또는 field")
+    file: str | None = None
+    page: int | None = None
+    quote: str | None = Field(None, description="공고서 원문 그대로 인용 (pdf일 때)")
+    field: str | None = Field(None, description="tender.<필드명> 또는 company.<필드명> (field일 때)")
+    value: str | None = None
+    company_field: str = Field(description="조건과 충돌하는 업체 프로필 항목 (예: company.소재지, company.중소기업여부)")
+    company_value: str = Field(description="그 항목의 업체 프로필 값 그대로 (예: 강원, False)")
+
+
 class VerifyItem(BaseModel):
     bidNtceNo: str
     fit_score: int = Field(ge=0, le=100, description="업체 적합도 재평가 (0-100)")
     comment: str = Field(description="재평가 이유 1-2문장. 입력에 없는 사실은 쓰지 않는다")
+    issues: list[VerifyIssue] = Field([], description="업체 프로필과 맞지 않는 참가 조건. 근거 없으면 비운다")
 
 
 class VerifyResult(BaseModel):
@@ -127,13 +141,25 @@ class CriteriaResult(BaseModel):
     period: str | None = Field(None, description="과업 기간. 원문에 없으면 null")
 
 
+# 청크는 "- (파일 p.쪽) [섹션] 본문"으로 보여 준다 → 인용에 앞 표시가 섞이면 출처 대조에서 떨어진다
+QUOTE_RULE = "quote는 청크 본문을 그대로 옮기고, 앞의 (파일 p.쪽)·[섹션] 표시는 넣지 마세요. file·page는 그 표시의 값을 쓰세요."
+
 RANK_PROMPT = """당신은 공공 입찰 공고 검토를 돕는 분석가입니다.
 업체 프로필과 후보 공고(룰 점수 상위)의 필드·공고서 청크만 보고, 업체가 먼저 검토할 순서로 모든 후보의 순위를 매기세요.
+순위 기준 (위가 더 중요):
+1. 과업 내용이 업체 역량 키워드·과거 실적과 얼마나 같은 일인가
+2. 참가자격이 업체 프로필과 충돌하지 않는가 (충돌하면 과업이 맞아도 아래로)
+3. 예산이 업체 참여가능금액 범위 안인가
+4. 업체 프로필에 '추가요청'이 있으면 그 요청에 맞는가
+rule_score는 참고만 하세요.
 규칙:
-- 입력에 있는 정보로만 판단하고, 없는 정보는 "확인 필요"라고 쓰세요.
-- 공고마다 근거 3-4개. 공고서 근거는 source_type=pdf, file·page와 원문 그대로의 quote를 붙이세요.
+- 입력에 있는 정보로만 판단하세요. 근거가 없는 내용은 쓰지 말고, "확인 필요" 같은 문구로 근거를 채우지 마세요.
+- 공고마다 근거 2-4개. 공고서 근거는 source_type=pdf, file·page와 원문 그대로의 quote를 붙이세요.
   필드 근거는 source_type=field, field(예: tender.pubPrcrmntClsfcNo)와 value를 붙이세요.
-- 참가자격상 의심되는 점은 qualification_flags에 적으세요.
+- {quote_rule}
+- qualification_flags에는 공고의 필수 참가조건이 업체 프로필 값과 직접 충돌하는 것만 1문장씩 적으세요
+  (예: "지역제한 충청북도 — 업체 소재지 강원", "중소기업 한정 — 업체는 중소기업 아님").
+  업체 프로필로 확인할 수 없는 것(면허·인증·직접생산 보유, 소기업 여부, 특정 실적)은 적지 마세요.
 - 금지: 낙찰 확률 예측, 최종 입찰 결정, 입력에 없는 인용 생성.
 
 [업체 프로필]
@@ -144,6 +170,7 @@ RANK_PROMPT = """당신은 공공 입찰 공고 검토를 돕는 분석가입니
 
 QUERY_PROMPT = """아래 업체 프로필을 보고, 이 업체가 수행할 만한 공공 용역 공고를 찾기 위한 검색 문장을 한국어 1-2문장으로 쓰세요.
 업종·역량 키워드·과거 실적의 사업 유형을 담고, 지역·금액 같은 조건은 빼세요.
+검색 대상은 나라장터 공고명·분류명이므로, 공고명에 실제로 쓰이는 표현으로 쓰세요 (예: "축제 기획 및 운영 대행 용역", "정보시스템 고도화 사업").
 
 [업체 프로필]
 {company}"""
@@ -188,8 +215,24 @@ NOTE_PROMPT = """업체 담당자가 공고 추천 조건을 자유롭게 적었
 
 VERIFY_PROMPT = """당신은 추천 결과를 다시 확인하는 검증 담당입니다.
 추천 Worker가 고른 상위 후보와 업체 프로필을 보고, 후보마다 적합도(0-100)를 재평가하고 순위를 조정하세요.
+특히 추천 단계가 놓쳤을 수 있는 참가 조건(지역 제한·중소기업 제한·면허/등록·실적요건·마감 일정)을
+공고 필드와 [자격 청크]에서 찾아 업체 프로필(소재지·중소기업여부·업종·참여가능금액·과거실적)과 대조하세요.
 규칙:
 - 입력에 있는 정보로만 판단하세요. 낙찰 가능성은 평가하지 않습니다.
+- issues에는 공고의 필수 참가조건이 업체 프로필 값과 직접 충돌하는 것만 넣으세요. 충돌하는 프로필 항목을
+  company_field·company_value에 그대로 적으세요. company_field는 소재지·중소기업여부·업종·참여가능금액 중 하나입니다. 예:
+  · 지역제한(본점·주된 영업소 소재지가 부산) ↔ company.소재지 강원
+  · 중소기업·소상공인 확인서 필수 ↔ company.중소기업여부 False
+  · 대기업·중견기업 참여 불가(20억 미만 SW사업 등) ↔ company.중소기업여부 False
+  · 필수 업종 등록(공공디자인전문회사·청소년수련시설·실내건축공사업 등)이 업체 업종과 전혀 다른 분야 ↔ company.업종
+  지역제한은 참가자격 조항뿐 아니라 입찰방법·계약방법 문장(예: "지역제한(충청북도) 경쟁입찰")에도 있으니 함께 보세요.
+  "경기도 및 서울특별시에 둔 업체"처럼 여러 지역이 나열되면 그중 한 곳에 있으면 충족입니다.
+- issue가 아닌 것: 업체 프로필에 정보가 없어 확인할 수 없는 조건(면허·인증·직접생산 보유 여부, 소기업 여부, 특정 실적),
+  선호 계약방식과 다른 것 같은 선호 차이. 이런 내용은 comment에 적으세요.
+- 공고서 근거는 source_type=pdf, file·page와 원문 그대로의 quote를, 필드 근거는 source_type=field, field(예: tender.rgnLmtBidLocplcJdgmBssNm)와 value를 붙이세요.
+- {quote_rule}
+- qualification_flags는 추천 단계의 의심 사항입니다. 근거로 확인되면 issues에 넣고, 근거가 없으면 무시하세요.
+- issues가 있는 후보는 순위를 낮추세요.
 - order에는 입력 후보 공고번호를 빠짐없이 한 번씩 넣으세요 (새 공고번호 금지).
 - comment는 재평가 이유를 1-2문장으로.
 
@@ -201,7 +244,7 @@ VERIFY_PROMPT = """당신은 추천 결과를 다시 확인하는 검증 담당�
 
 CHECKLIST_PROMPT = """아래 공고서 청크에서, 업체 담당자가 입찰 참가 전에 확인해야 할 조건을 3-8개 뽑으세요.
 - 분류: 참가자격(등록·면허·직접생산·중소기업 등), 실적요건, 제출서류, 일정(제출 마감·제안설명회 등), 기타(공동수급·하도급 제한 등).
-- 원문에 있는 조건만 쓰고, 항목마다 file·page·quote(원문 그대로, 짧게)를 붙이세요.
+- 원문에 있는 조건만 쓰고, 항목마다 file·page·quote(원문 그대로, 짧게)를 붙이세요. {quote_rule}
 - 일반적인 안내 문구나 원문에 없는 추측은 쓰지 마세요.
 
 [공고] {name}
@@ -209,7 +252,10 @@ CHECKLIST_PROMPT = """아래 공고서 청크에서, 업체 담당자가 입찰 
 {chunks}"""
 
 CRITERIA_PROMPT = """아래 공고서 청크에서 제안서 평가항목과 배점, 과업 기간을 추출하세요.
-- 원문에 있는 항목만 추출하고, 항목마다 file·page·quote(원문 그대로)를 붙이세요.
+- 원문에 있는 항목만 추출하고, 항목마다 file·page·quote(원문 그대로)를 붙이세요. {quote_rule}
+- 배점표는 PDF에서 한 줄로 펴져 "평가항목 배점 평가항목 배점 …" 순서로 나올 수 있습니다. 항목명과 바로 뒤 숫자를 짝지으세요.
+- 대항목과 세부항목이 함께 있으면 대항목 기준으로 추출하세요. 기술·가격 평가 비율(예: 기술 90 / 가격 10)은 항목이 아닙니다.
+- 대항목 배점 합계는 보통 기술평가 총점(예: 90 또는 100)과 같습니다. 맞지 않으면 빠진 항목이 없는지 다시 보세요.
 - 배점이 없으면 score=null, 과업 기간이 없으면 period=null.
 
 [공고] {name}
@@ -221,7 +267,7 @@ def _invoke(schema, prompt: str):
     llm = get_llm()
     if llm is None:
         return None
-    structured = llm.with_structured_output(schema)
+    structured = llm.with_structured_output(schema).with_config(run_name=f"llm:{schema.__name__}")  # LangSmith 표시 이름
     for attempt in range(MAX_RETRY + 1):
         try:
             return structured.invoke(prompt)
@@ -231,7 +277,8 @@ def _invoke(schema, prompt: str):
 
 
 def _chunks_text(chunks: list[dict]) -> str:
-    return "\n".join(f"- ({c['file']} p.{c['page']}) {c['text']}" for c in chunks)
+    return "\n".join(f"- ({c['file']} p.{c['page']})" + (f" [{c['section']}]" if c.get("section") else "")
+                     + f" {c['text']}" for c in chunks)
 
 
 def rag_rank(company: dict, candidates: list[dict], chunks_by_tender: dict[str, list[dict]],
@@ -244,7 +291,7 @@ def rag_rank(company: dict, candidates: list[dict], chunks_by_tender: dict[str, 
         blocks.append(json.dumps({"bidNtceNo": c["bidNtceNo"], "rule_score": c["soft_score"],
                                   "fields": {f: t.get(f, "") for f in fields}}, ensure_ascii=False)
                       + "\n청크:\n" + (_chunks_text(chunks_by_tender.get(c["bidNtceNo"], [])) or "(PDF 근거 없음)"))
-    result = _invoke(RankResult, RANK_PROMPT.format(company=json.dumps(company, ensure_ascii=False),
+    result = _invoke(RankResult, RANK_PROMPT.format(quote_rule=QUOTE_RULE, company=json.dumps(company, ensure_ascii=False),
                                                     candidates="\n\n".join(blocks)))
     if result is None:
         return None
@@ -299,35 +346,55 @@ def check_verify(result, ids: list[str]) -> tuple[dict | None, str | None]:
     return result.model_dump(), None
 
 
-def verify_ranking(company: dict, candidates: list[dict], tenders: dict[str, dict]) -> tuple[dict | None, str | None]:
-    """검증 서브에이전트. 재시도 없이 1회 — 실패하면 호출부가 원순위를 유지한다."""
+VERIFY_FIELDS = ("cntrctCnclsMthdNm", "budget", "rgnLmtBidLocplcJdgmBssNm", "bidPrtcptLmtYn", "pubPrcrmntClsfcNo",
+                 "bidNtceDt", "bidClseDt", "dminsttNm")
+
+
+def verify_ranking(company: dict, candidates: list[dict], tenders: dict[str, dict],
+                   chunks_by_tender: dict[str, list[dict]] | None = None) -> tuple[dict | None, str | None]:
+    """검증 서브에이전트. 출력 확인에 실패하면 1회만 재시도 — 그래도 실패하면 호출부가 원순위를 유지한다.
+
+    추천 단계와 다른 근거(참가 조건 필드·자격 청크)를 줘서, 앞 단계가 놓친 자격 문제를 찾게 한다.
+    """
     llm = get_llm()
     if llm is None:
         return None, "LLM 키 없음"
-    blocks = [json.dumps({"bidNtceNo": c["bidNtceNo"], "rank": c["rank"], "bidNtceNm": c["bidNtceNm"],
-                          "rule_score": c["soft_score"], "reasons": [r["text"] for r in c.get("reasons", [])],
-                          "계약방식": tenders[c["bidNtceNo"]].get("cntrctCnclsMthdNm"),
-                          "예산": tenders[c["bidNtceNo"]].get("budget")}, ensure_ascii=False) for c in candidates]
-    prompt = VERIFY_PROMPT.format(company=json.dumps(company, ensure_ascii=False), candidates="\n".join(blocks))
-    try:
-        result = llm.with_structured_output(VerifyResult).invoke(prompt)
-    except (ValidationError, OutputParserException) as e:
-        return None, f"형식 오류: {type(e).__name__}"
-    except Exception as e:
-        log.warning("검증 서브에이전트 예외: %s", e)
-        return None, f"예외: {type(e).__name__}"
-    return check_verify(result, [c["bidNtceNo"] for c in candidates])
+    chunks_by_tender = chunks_by_tender or {}
+    blocks = []
+    for c in candidates:
+        t = tenders[c["bidNtceNo"]]
+        blocks.append(json.dumps({"bidNtceNo": c["bidNtceNo"], "rank": c["rank"], "bidNtceNm": c["bidNtceNm"],
+                                  "rule_score": c["soft_score"], "reasons": [r["text"] for r in c.get("reasons", [])],
+                                  "qualification_flags": c.get("qualification_flags", []),
+                                  "fields": {f: t.get(f, "") for f in VERIFY_FIELDS}}, ensure_ascii=False)
+                      + "\n[자격 청크]\n" + (_chunks_text(chunks_by_tender.get(c["bidNtceNo"], [])) or "(PDF 근거 없음)"))
+    prompt = VERIFY_PROMPT.format(quote_rule=QUOTE_RULE, company=json.dumps(company, ensure_ascii=False), candidates="\n\n".join(blocks))
+    ids = [c["bidNtceNo"] for c in candidates]
+    for attempt in range(2):
+        try:
+            result = llm.with_structured_output(VerifyResult).with_config(run_name="llm:VerifyResult").invoke(prompt)
+        except (ValidationError, OutputParserException) as e:
+            out = None, f"형식 오류: {type(e).__name__}"
+        except Exception as e:  # 네트워크·타임아웃 등은 재시도하지 않는다
+            log.warning("검증 서브에이전트 예외: %s", e)
+            return None, f"예외: {type(e).__name__}"
+        else:
+            out = check_verify(result, ids)
+        if out[0] is not None:
+            return out
+        log.warning("검증 출력 확인 실패 (%d/2): %s", attempt + 1, out[1])
+    return out
 
 
 def extract_checklist(tender: dict, chunks: list[dict]) -> dict | None:
     if not chunks:
         return None
-    result = _invoke(ChecklistResult, CHECKLIST_PROMPT.format(name=tender.get("bidNtceNm"), chunks=_chunks_text(chunks)))
+    result = _invoke(ChecklistResult, CHECKLIST_PROMPT.format(quote_rule=QUOTE_RULE, name=tender.get("bidNtceNm"), chunks=_chunks_text(chunks)))
     return result.model_dump() if result else None
 
 
 def extract_criteria(tender: dict, chunks: list[dict]) -> dict | None:
     if not chunks:
         return None
-    result = _invoke(CriteriaResult, CRITERIA_PROMPT.format(name=tender.get("bidNtceNm"), chunks=_chunks_text(chunks)))
+    result = _invoke(CriteriaResult, CRITERIA_PROMPT.format(quote_rule=QUOTE_RULE, name=tender.get("bidNtceNm"), chunks=_chunks_text(chunks)))
     return result.model_dump() if result and result.items else None

@@ -65,7 +65,8 @@ def test_graph_e2e_rule_mode(db, monkeypatch):
     assert graph.get_state(cfg).next == ("interview",)
     state = graph.invoke(Command(resume={"answers": {}}), cfg)  # 전부 건너뜀 → 기본값
     assert len(state["recommendations"]) == 10 and state["rag_status"] == "rule_only"
-    assert state["verification"] == {"status": "skipped", "reason": "LLM 키 없음", "checked": 5, "changed": False}
+    assert state["verification"] == {"status": "skipped", "reason": "LLM 키 없음", "checked": 5, "changed": False,
+                                     "flagged": 0, "issues_dropped": 0}
     assert state["search"]["path"] == "keyword_fallback" and state["recommendations"][0]["llm"] is None
     assert graph.get_state(cfg).next == ("select_tender",)
 
