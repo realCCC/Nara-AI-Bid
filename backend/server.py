@@ -54,6 +54,25 @@ class ChecklistIn(BaseModel):
 
 # 담당자 확인 체크리스트: (업체 ID, 공고번호) → 만든 체크리스트. 같은 공고를 새 작업으로 다시 골라도 그대로 쓴다
 CHECKLISTS: dict[tuple[str, str], dict] = {}
+# 추천 진행 상황: thread_id → 끝난 노드·단계별 숫자. 화면이 1초마다 읽어 단계 카드를 하나씩 채운다
+PROGRESS: dict[str, dict] = {}
+
+
+def _track(thread_id: str, node: str, update) -> None:
+    """그래프 스트림의 노드 완료 이벤트를 화면용 진행 정보로 요약한다."""
+    p, info = PROGRESS[thread_id], PROGRESS[thread_id]["info"]
+    p["done"].append(node)
+    if not isinstance(update, dict):
+        return
+    if node == "filter_and_score":
+        f = update["filter_log"]["funnel"]
+        info |= {"total": f["total"], "hard_pass": f["hard_pass"]}
+    elif node == "search":
+        info["path"] = update["search"].get("path")
+    elif node == "rerank":
+        info |= {"top": len(update["top10"]), "rerank": update["search"].get("rerank")}
+    elif node == "rag_recommend":
+        info |= {"rag_status": update["rag_status"], "recs": len(update["recommendations"])}
 
 
 def _company(token: str) -> dict:
@@ -129,8 +148,14 @@ def answer_interview(body: InterviewIn):
     company = _owned(body.token, body.thread_id)
     if graph.get_state(_cfg(body.thread_id)).next != ("interview",):
         raise HTTPException(409, "이미 답변한 인터뷰입니다. 추천을 다시 실행하세요.")
-    state = graph.invoke(Command(resume={"answers": {k: v for k, v in body.answers.items() if v}}),
-                         _cfg(body.thread_id, company))
+    PROGRESS[body.thread_id] = {"company": company["업체ID"], "done": [], "info": {}}
+    # invoke 대신 stream: 서브그래프(필터→검색→리랭크) 노드까지 끝날 때마다 진행 상황을 남긴다
+    for _ns, chunk in graph.stream(Command(resume={"answers": {k: v for k, v in body.answers.items() if v}}),
+                                   _cfg(body.thread_id, company), stream_mode="updates", subgraphs=True):
+        for node, update in chunk.items():
+            if not node.startswith("__"):
+                _track(body.thread_id, node, update)
+    state = graph.get_state(_cfg(body.thread_id)).values
     log = state["filter_log"]
     prefs = state["prefs"]
     return {
@@ -146,6 +171,16 @@ def answer_interview(body: InterviewIn):
         "verification": state.get("verification"),
         "recommendations": state.get("recommendations", []),
     }
+
+
+@app.get("/api/progress")
+def progress(token: str, thread_id: str):
+    """추천 진행 상황 (끝난 노드 목록과 단계별 숫자)."""
+    company = _company(token)
+    p = PROGRESS.get(thread_id)
+    if p is None or p["company"] != company["업체ID"]:
+        return {"done": [], "info": {}}
+    return {"done": p["done"], "info": p["info"]}
 
 
 @app.post("/api/checklist")
