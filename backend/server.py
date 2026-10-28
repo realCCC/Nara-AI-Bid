@@ -64,8 +64,12 @@ def _company(token: str) -> dict:
     return profile
 
 
-def _cfg(thread_id: str) -> dict:
-    return {"configurable": {"thread_id": thread_id}}
+def _cfg(thread_id: str, company: dict | None = None) -> dict:
+    """그래프 실행 설정. company를 주면 LangSmith 트레이스에 업체ID 메타데이터·태그를 단다."""
+    cfg = {"configurable": {"thread_id": thread_id}}
+    if company:
+        cfg |= {"run_name": "proposal_graph", "tags": [company["업체ID"]], "metadata": {"업체ID": company["업체ID"]}}
+    return cfg
 
 
 @app.get("/")
@@ -113,7 +117,7 @@ def recommend(token: str):
     """추천 시작 → 인터뷰(HITL ⓪)에서 멈추고 객관식 문항을 돌려준다."""
     company = _company(token)
     thread_id = uuid.uuid4().hex
-    graph.invoke({"company_profile": company}, _cfg(thread_id))
+    graph.invoke({"company_profile": company}, _cfg(thread_id, company))
     tasks = graph.get_state(_cfg(thread_id)).tasks
     questions = next((i.value["questions"] for t in tasks for i in t.interrupts), [])
     return {"thread_id": thread_id, "questions": questions}
@@ -122,10 +126,11 @@ def recommend(token: str):
 @app.post("/api/interview")
 def answer_interview(body: InterviewIn):
     """인터뷰 답변으로 재개 → 추천 Worker·RAG·검증 → HITL ①에서 멈춤."""
-    _owned(body.token, body.thread_id)
+    company = _owned(body.token, body.thread_id)
     if graph.get_state(_cfg(body.thread_id)).next != ("interview",):
         raise HTTPException(409, "이미 답변한 인터뷰입니다. 추천을 다시 실행하세요.")
-    state = graph.invoke(Command(resume={"answers": {k: v for k, v in body.answers.items() if v}}), _cfg(body.thread_id))
+    state = graph.invoke(Command(resume={"answers": {k: v for k, v in body.answers.items() if v}}),
+                         _cfg(body.thread_id, company))
     log = state["filter_log"]
     prefs = state["prefs"]
     return {
@@ -137,6 +142,7 @@ def answer_interview(body: InterviewIn):
                       "note": prefs["note"], "note_effect": prefs["note_effect"]},
         "search": state.get("search"),
         "rag_status": state.get("rag_status"),
+        "rag_chunk_search": state.get("rag_chunk_search"),
         "verification": state.get("verification"),
         "recommendations": state.get("recommendations", []),
     }
@@ -165,7 +171,7 @@ def select(body: SelectIn):
     if missing:
         raise HTTPException(400, f"확인하지 않은 항목이 {len(missing)}개 있습니다.")
     try:
-        state = graph.invoke(Command(resume=body.bidNtceNo), _cfg(body.thread_id))
+        state = graph.invoke(Command(resume=body.bidNtceNo), _cfg(body.thread_id, company))
     except ValueError as e:
         raise HTTPException(400, str(e))
     repo.save_checklist(body.thread_id, body.bidNtceNo, made)

@@ -684,7 +684,7 @@ async function submitInterview(answers) {
     $("st5Label").textContent = RAG_LABEL[r.rag_status] || "건";
     const verified = v && v.status === "passed";
     setStage("st5", verified ? v.checked : "–", verified ? "done" : "");
-    $("st6Label").textContent = verified ? `건 재평가 · ${v.changed ? "순위 조정" : "순위 유지"}` : "생략";
+    $("st6Label").textContent = verified ? `건 재평가 · ${v.changed ? "순위 조정" : "순위 유지"}${v.flagged ? ` · 자격 의심 ${v.flagged}건` : ""}` : "생략";
     $("progressBar").style.width = "100%";
     $("progressText").textContent = isLlm ? "출처 대조 완료" : "룰 추천 완료 — Azure 키를 입력하면 공고서 근거 순위·검증이 추가됩니다";
     renderStatus(r);
@@ -717,11 +717,14 @@ function renderStatus(r) {
   const vTag = !v ? '<span class="tag gray">검증 -</span>' : v.status === "passed"
     ? `<span class="tag ok">검증 통과</span> 상위 ${v.checked}건 재평가${v.changed ? " · 순위 조정됨" : " · 순위 유지"}`
     : `<span class="tag warn">검증 생략 (원순위 유지)</span> 사유: ${esc(v.reason)}`;
+  const paths = Object.values(r.rag_chunk_search?.paths || {}).filter(p => p !== "none"), hybrid = paths.filter(p => p === "hybrid").length;
+  const chunkTag = !paths.length ? "" : `<span class="tag ${hybrid ? "ok" : "gray"}">근거 검색 ${hybrid
+    ? `BM25+벡터${hybrid < paths.length ? ` ${hybrid}/${paths.length}건` : ""}` : "BM25"}</span>`;
   const row = (k, html) => `<div><dt>${k}</dt><dd>${html}</dd></div>`;
   const rows = [
     row("실행 경로", `${MODE_BADGE[r.rag_status] || esc(r.rag_status)}
       <span class="tag ${s.path === "semantic" ? "ok" : "gray"}">검색 ${s.path === "semantic" ? "의미 검색" : "키워드 검색"}</span>
-      <span class="tag ${s.rerank === "applied" ? "ok" : "gray"}">리랭크 ${s.rerank === "applied" ? "적용" : "생략"}</span> ${vTag}`),
+      <span class="tag ${s.rerank === "applied" ? "ok" : "gray"}">리랭크 ${s.rerank === "applied" ? "적용" : "생략"}</span> ${chunkTag} ${vTag}`),
     row("검색 문장", `${esc(s.query || "-")} <span class="muted">(${({ llm: "AI 작성", interview: "인터뷰 주력 분야", template: "템플릿" })[s.query_source] || "-"})</span>
       ${s.path !== "semantic" && s.reason ? `<div class="muted">${esc(s.reason)}</div>` : ""}${s.rerank !== "applied" && s.rerank_reason ? `<div class="muted">리랭크 생략: ${esc(s.rerank_reason)}</div>` : ""}`),
     row("의미 매칭", sem.used ? `<span class="tag ok">BGE-M3</span> ${esc((sem.keywords || []).join(", "))}` : `<span class="tag gray">문자열 일치만</span> ${esc(sem.reason || "")}`),
@@ -844,7 +847,10 @@ function renderResults() {
             ${searchScores(t.search)}
           </section>
         </div>
-        ${V ? `<div class="verify-box"><b>검증 에이전트 의견</b> <span class="muted">· 적합도 ${esc(V.fit_score)}점 · 원순위 ${esc(V.rank_before)}위</span><p>${esc(V.comment)}</p></div>` : ""}
+        ${V ? `<div class="verify-box"><b>검증 에이전트 의견</b> <span class="muted">· 적합도 ${esc(V.fit_score)}점 · 원순위 ${esc(V.rank_before)}위</span><p>${esc(V.comment)}</p>
+          ${(V.issues || []).map(i => `<p><span class="tag warn">${esc(i.type)}</span> ${esc(i.text)}
+            ${i.quote ? `<span class="quote" style="display:block;">“${esc(i.quote)}”</span>` : ""}
+            <span class="src">출처 · ${reasonSrc(i)}</span></p>`).join("")}</div>` : ""}
       </details>
       <div class="rec-foot">
         <button class="btn ${isSel ? "" : "primary"}" data-pick="${esc(t.bidNtceNo)}" ${isSel ? "disabled" : ""}>${isSel ? "선택 완료" : "이 공고 선택"}</button>
@@ -859,7 +865,7 @@ function renderResults() {
 // 담당자 확인 체크리스트: 서버가 공고 필드 + AI가 공고서에서 뽑은 조건(원문 대조 통과) + AI 자격 의심 사항으로 만든다.
 // 전부 체크해야 초안 버튼이 켜지고, 확정할 때 체크한 항목이 작업 이력에 저장된다
 const ORIGIN_TAG = { ai: '<span class="tag llm">AI · 공고서</span>', field: '<span class="tag gray">공고 정보</span>',
-  flag: '<span class="tag warn">AI 확인 사항</span>', common: '<span class="tag gray">공통</span>' };
+  flag: '<span class="tag warn">AI 확인 사항</span>', verify: '<span class="tag warn">검증 에이전트</span>', common: '<span class="tag gray">공통</span>' };
 const checklistDone = () => {
   const boxes = [...document.querySelectorAll("#checklist input")];
   return boxes.length > 0 && boxes.every(i => i.checked);
@@ -896,7 +902,7 @@ function renderChecklist(cl) {
       <legend>제안서를 만들기 전에 확인하세요 <span class="muted" id="checkCount">0 / ${n}</span>
         ${cl.source === "llm" ? '<span class="tag llm">AI가 공고서에서 뽑은 항목 포함</span>' : '<span class="tag gray">공고서 항목 없음 · 기본 항목</span>'}</legend>
       ${cl.items.map(x => `
-        <label class="${x.origin === "flag" ? "flagged" : ""}"><input type="checkbox" value="${esc(x.id)}">
+        <label class="${x.origin === "flag" || x.origin === "verify" ? "flagged" : ""}"><input type="checkbox" value="${esc(x.id)}">
           <span><span class="cat">${esc(x.category)}</span> ${ORIGIN_TAG[x.origin] || ""}<br>${esc(x.text)}
             ${x.evidence?.quote ? `<span class="quote" style="display:block;">“${esc(x.evidence.quote)}”</span>` : ""}
             ${x.evidence ? `<span class="src">출처 · ${reasonSrc(x.evidence)}</span>` : ""}</span></label>`).join("")}

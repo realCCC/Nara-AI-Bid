@@ -10,4 +10,5 @@ data/pdfs/
 data/chroma/
 data/app.db
 outputs/
-data/emb_cache.npz
+# 임베딩 캐시(data/emb_cache.npz 공고 벡터, data/chunk_vecs/ 공고서 청크 벡터)는 커밋한다
+# → 다른 PC에서 BGE-M3 임베딩을 다시 계산하지 않음 (약 10MB, 청킹이나 EMBEDDING_MODEL이 바뀌면 다시 계산됨)

@@ -11,6 +11,7 @@ from functools import lru_cache
 from typing import Protocol
 
 from backend import config
+from backend.tracing import traced
 from backend.tools.rules import tokenize
 
 log = logging.getLogger(__name__)
@@ -179,6 +180,9 @@ def rrf(rankings: dict[str, list[str]], k: int = RRF_K) -> dict[str, float]:
     return fused
 
 
+@traced("hybrid_search", "retriever", big=("docs", "rule_order"),
+        outputs=lambda r: {"path": r["path"], "reason": r["reason"], "lists": r["lists"],
+                           "top10": [{"bidNtceNo": i, **r["scores"][i]} for i in r["order"][:10]]})
 def hybrid_search(docs: dict[str, str], query: str, rule_order: list[str] | None = None) -> dict:
     """dense + BM25 (+ 룰 점수 순위)를 RRF로 합친다. 반환 order는 문서 전체, scores는 단계별 점수."""
     scores = {i: {"rule_rank": None, "dense": None, "bm25": None, "rrf": None, "rerank": None} for i in docs}
@@ -208,6 +212,8 @@ def hybrid_search(docs: dict[str, str], query: str, rule_order: list[str] | None
             "lists": list(rankings)}
 
 
+@traced("rerank", big=("docs", "result"), outputs=lambda r: {"rerank": r["rerank"], "reason": r["rerank_reason"],
+                                                     "top10": [{"bidNtceNo": i, **r["scores"][i]} for i in r["order"][:10]]})
 def rerank(result: dict, docs: dict[str, str], top: int = RERANK_TOP) -> dict:
     """상위 top건만 cross-encoder로 재정렬. semantic이 아니거나 실패하면 생략(순서 유지)."""
     if result["path"] != "semantic":

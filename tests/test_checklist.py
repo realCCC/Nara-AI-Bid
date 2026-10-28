@@ -39,7 +39,7 @@ def test_ai_items_keep_only_quoted(monkeypatch):
     ]}
     monkeypatch.setattr(config, "llm_enabled", lambda: True)
     monkeypatch.setattr(pdf, "tender_chunks", lambda t: CHUNKS)
-    monkeypatch.setattr(retrieval, "retrieve", lambda chunks, q, k=3: chunks)
+    monkeypatch.setattr(retrieval, "retrieve", lambda chunks, q, k=3, tender_no=None: chunks)
     monkeypatch.setattr(llm, "extract_checklist", lambda t, c: calls.append(1) or raw)
     cl = checklist.build(T())
     ai = [i for i in cl["items"] if i["origin"] == "ai"]

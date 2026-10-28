@@ -30,9 +30,9 @@ LangGraph 그래프 하나(`backend/graphs/proposal.py`)가 규칙 기반 Superv
 | ① 자격 필터 | 룰 | PDF 보유·업종·참가 제한·지역·예산(H1~H6) + 인터뷰 조건(I1) | `tools/rules.py` |
 | ② 소프트 점수 | 룰 + **AI** | S1 업종 · S2 역량 키워드(문자열 일치와 BGE-M3 의미 유사도 중 큰 값) · S3 예산 규모 · S4 선호 계약방식 | `tools/rules.py`, `tools/search.py` |
 | ③ 의미 검색·리랭크 | **AI** | LLM이 쓴 검색 문장으로 dense(BGE-M3) + BM25 + 룰 순위를 RRF로 합치고 bge-reranker로 상위 15건 재정렬 → 상위 10건 | `graphs/recommend.py` |
-| ④ 공고서 근거 순위 (RAG) | **AI** | 상위 10건 공고서 PDF 청크를 읽고 LLM이 순위·근거를 매김. 근거 인용은 원문과 대조해 통과한 것만 표시 | `graphs/proposal.py`, `tools/evidence.py` |
-| ⑤ 추천 검증 | **AI** | 검증 서브에이전트가 상위 5건 적합도를 재평가하고 순위를 조정 (실패하면 원순위 유지) | `tools/llm.py` |
-| ⑥ 담당자 확인 체크리스트 | **AI** · HITL | 공고 필드 조건 + LLM이 공고서에서 뽑은 참가자격·실적·제출서류·일정(원문 대조) + AI 자격 의심 사항. 전부 체크해야 선택 확정, 이력에 저장 | `tools/checklist.py` |
+| ④ 공고서 근거 순위 (RAG) | **AI** | 상위 10건 공고서 PDF 청크를 BM25 + BGE-M3 하이브리드(RRF)로 찾아 LLM이 순위·근거를 매김 (청크 벡터는 상위 공고만 계산해 공고별 저장, `scripts/warm_chunk_vectors.py`로 미리 계산). 근거 인용은 원문과 대조해 통과한 것만 표시 | `agents/rag.py`, `tools/evidence.py` |
+| ⑤ 추천 검증 | **AI** | 검증 서브에이전트가 상위 5건을 재평가. 추천 단계와 다른 근거(참가 조건 필드 + 자격 쪽 공고서 청크)로 업체가 충족 못 할 조건(issues)을 찾고, 원문 대조를 통과한 issue가 있는 공고는 뒤로 보냄 (실패하면 원순위 유지) | `agents/verify.py`, `tools/llm.py` |
+| ⑥ 담당자 확인 체크리스트 | **AI** · HITL | 공고 필드 조건 + LLM이 공고서에서 뽑은 참가자격·실적·제출서류·일정(원문 대조) + AI 자격 의심 사항·검증 에이전트 issue. 전부 체크해야 선택 확정, 이력에 저장 | `tools/checklist.py` |
 | ⑦ 제안서 초안 | 룰 + **AI** | LLM이 평가항목·배점·과업 기간을 추출하고 고정 템플릿에 채움. 채울 수 없는 자리는 `[확인 필요]` | `tools/proposal.py` |
 
 - LLM·임베딩이 없거나 출력 검증에 실패하면 단계마다 룰·기본값으로 폴백한다 (화면에 "생략"·"룰 순위로 대체" 등으로 표시).
@@ -76,7 +76,7 @@ LangGraph 그래프 하나(`backend/graphs/proposal.py`)가 규칙 기반 Superv
 | LLM | Azure OpenAI gpt-4.1 (structured output) |
 | Agent | LangGraph (+ LangChain), 규칙 기반 Supervisor + 추천 Worker 서브그래프, `langgraph.json`(LangGraph Server 진입점) |
 | 검색 | BGE-M3 임베딩(로컬, `data/emb_cache.npz` 벡터 캐시) + BM25(kiwipiepy 형태소) + RRF, bge-reranker-v2-m3 |
-| PDF | PyMuPDF (페이지 청킹) |
+| PDF | PyMuPDF (조항 구조 청킹, 300~800자) |
 | 작업 이력 DB | SQLite (업체·추천 결과·선택·담당자 체크리스트·초안) |
 | 서버 | FastAPI + uvicorn, Jinja2(제안서 템플릿, autoescape) |
 | 프론트엔드 | 단일 HTML(`frontend/index.html`, Vanilla JS), IBM Plex Sans KR |
@@ -87,14 +87,15 @@ LangGraph 그래프 하나(`backend/graphs/proposal.py`)가 규칙 기반 Superv
 ```
 backend/
   server.py            FastAPI: 화면 + API (로그인·추천·인터뷰·체크리스트·선택·이력·다운로드)
-  graphs/              proposal.py (전체 그래프·HITL), recommend.py (추천 Worker 서브그래프)
+  graphs/              proposal.py (Supervisor·전체 그래프 조립), recommend.py (추천 Worker 서브그래프)
+  agents/              에이전트(Worker)별 노드: interview(HITL ⓪) · rag · verify · selection(HITL ①) · draft · state(공유 State)
   tools/               interview · keyword_profile · rules · search · retrieval · pdf · evidence · checklist · proposal · llm
   db/                  schema.sql, repository.py (SQLite)
   templates/           proposal.html.j2 (제안서 초안)
 frontend/index.html    화면 (로그인 → 맞춤 추천 → 공고 선택 → 제안서 초안 → 이전 작업)
 POC_예시_html/         초기 화면 시안 (poc_screen.html)
-scripts/               run_demo.py · seed_companies.py · check_env.py · validate_data.py
-tests/                 룰·최소 실행 경로·DB·그래프 E2E·인터뷰·의미 프로필·체크리스트 (53건)
+scripts/               run_demo.py · seed_companies.py · check_env.py · validate_data.py · eval_verify.py
+tests/                 룰·최소 실행 경로·DB·그래프 E2E·인터뷰·의미 프로필·체크리스트·검증 평가·청킹 (69건)
 data/                  공고 원본·업체 JSON·지역 제한·SQLite·벡터 캐시·샘플(sample/)
 공고파일/               공공데이터포털에서 받은 공고 500건 원본 (→ data/raw/ 사본)
 docs/                  1~7 단계 문서
@@ -110,6 +111,51 @@ docs/                  1~7 단계 문서
 | 3 UI & 안정화 | 6주 (11/02-11/08) | 화면, 업체 50건 확장, 가중치 확정 후 라벨링 | 화면 개편 완료 · 업체 확장·라벨링 남음 |
 | 4 검증 & 평가 | 7-8주 (11/09-11/22) | KPI 측정, 최종 산출물 | 예정 |
 
+## ✅ TODO
+
+**검증 에이전트 평가를 BGE 기준으로 다시 하기** (10/28 키워드 경로로 1차 평가 완료)
+
+- [ ] 다른 프로그램을 닫고 업체별로 나눠 PDF 청크 벡터 미리 계산 — 한 번에 돌리면 CPU 메모리 부족으로 중단됨 (10/29 청킹 변경으로 옛 벡터는 무효, 새 청킹 기준 11건만 캐시됨)
+  `uv run python scripts/warm_chunk_vectors.py --company data/companies/company_01.json` (01~10 반복)
+- [ ] BGE로 스냅샷 다시 만들기: `uv run python scripts/eval_verify.py snapshot` (같은 공고 라벨은 유지됨)
+- [ ] 새로 상위 5건에 들어온 공고에 라벨 붙이기 (`data/eval/verify_gold.json`)
+- [x] 라벨 50건 2차 검토 (10/29, Claude가 공고서 자격 조항 전체와 대조 → 4건 수정, `label_by: claude-reviewed`)
+- [ ] 담당자 최종 확인: `data/eval/verify_gold_review.xlsx`의 노란 칸(최종 라벨·메모)만 확인 후 저장 → Claude가 정답셋에 반영
+- [ ] `uv run python scripts/eval_verify.py eval --runs 3`으로 확정 수치 측정, 강화 전 검증과 비교
+- [x] 남은 오탐 줄이기 (10/29 프롬프트·충돌 항목 제한, 아래 2차 결과)
+
+1차 결과 (키워드 경로 스냅샷, 초안 라벨, 3회 평균)
+
+| 지표 | 검증 전 | 강화 전 검증 | 강화 후 검증 |
+|---|---|---|---|
+| nDCG@5 | 0.911 | 0.886 | 0.927 |
+| P@3 | 0.633 | 0.578 | 0.733 |
+| 부적격 하위 배치율 | 0.679 | 0.583 | 0.881 |
+| 플래그 정밀도 / 재현율 | – | – | 0.84 / 0.67 |
+
+2차 결과 (10/29, 키워드 경로 스냅샷, 2차 검토 라벨, 새 청킹, 3회 평균) — 검증 프롬프트 개선 전후
+
+| 지표 | 검증 전 | 프롬프트 개선 전 | 프롬프트 + 섹션 우선 자격 청크 |
+|---|---|---|---|
+| nDCG@5 | 0.917 | 0.943 | 0.993 |
+| P@3 | 0.600 | 0.644 | 0.633 |
+| 부적격 하위 배치율 | 0.643 | 0.893 | 1.000 |
+| 플래그 정밀도 / 재현율 | – | 1.00 / 0.54 | 0.95 / 0.97 |
+
+## 🛠️ 개선 내역
+
+| 날짜 | 개선 | 내용 |
+|---|---|---|
+| 10/28 | 검증 에이전트 강화 | 추천 단계와 다른 근거(참가 조건 필드 + 자격 쪽 공고서 청크)로 불충족 조건(issues)을 찾고, 원문 대조와 업체 프로필 충돌 확인을 통과한 issue만 남겨 해당 공고를 뒤로 보냄. 형식 오류 시 1회 재시도. issue는 화면·담당자 체크리스트에도 표시 |
+| 10/28 | 검증 평가 도구 | `scripts/eval_verify.py`: 입력 스냅샷 고정 + 3단계 라벨 정답셋으로 검증 전후 nDCG·P@3·부적격 하위 배치율·플래그 정밀도/재현율 비교 (결과는 TODO 표) |
+| 10/28 | LangSmith 추적 | 그래프 노드·LLM 호출에 더해 검색·RAG 도구(BM25·BGE·리랭커·청킹·출처 대조)를 한 트레이스로 기록, 업체ID 태그 (`backend/tracing.py`) |
+| 10/29 | 청크 벡터 재사용 | 검증(자격 청크)·체크리스트·평가항목 추출의 청크 검색이 RAG 단계가 저장한 공고별 청크 벡터(`data/chunk_vecs/`)를 다시 씀. 전에는 같은 청크를 또 임베딩해 BGE 경로 첫 추천에서 검증 단계만 253초가 걸렸음(LangSmith 실측, C003). 임베딩 실패 시 키워드 검색으로 폴백 |
+| 10/29 | 공고서 조항 구조 청킹 | 500자 고정 분할 → 조항 기호(`1.`·`가.`·`○`·`※` 등) 단위로 나누고 300~800자로 맞춤(긴 조항은 문장 끝에서 자르고 한 문장 겹침, 짧은 조항은 이웃과 합침). 청렴계약 등 상투 문구·페이지 번호·구분선 제거, 섹션 제목을 붙인 `search_text`로 검색·임베딩하고 출처 대조는 원문 `text`로, 페이지를 넘는 조항은 `pages`로 대조. PDF 137개 기준 청크 3,695 → 3,003개(-19%, 임베딩 시간 감소), 상투 문구 포함 청크 634 → 57개. 단, 지역제한 공고 11건의 자격 청크 상위 4개 적중은 옛 방식과 같음(BGE 7/11) — 질의·k 개선은 별도 과제 (`backend/tools/pdf.py`) |
+| 10/29 | PDF 제어 문자 제거 | 공고서 PDF 137개 중 18개가 단어마다 ``이 붙어 추출돼, LLM 인용이 원문 대조에서 떨어지고 키워드 검색이 어긋났음(옛 청킹부터 있던 문제). 청킹 단계에서 제거 |
+| 10/29 | 정답셋 2차 검토 | 공고서 자격 조항 전체와 다시 대조해 4건 수정(추천→부적격 1: 20억 미만 SW사업 대기업·중견 참여 불가 / 추천→적격-비추천 3: 영상 직접생산·영상 실적 요구, 공고서 없음). 라벨 분포 추천 23·적격-비추천 14·부적격 13 |
+| 10/29 | 에이전트 프롬프트 개선 | 공통: 청크 앞 `(파일 p.쪽) [섹션]` 표시를 인용에 넣지 않게(출처 대조도 표시를 떼고 비교). 검증: 충돌 예시(대기업·중견 참여 불가, 필수 업종 등록, 입찰방법 문장 속 지역제한, '및' 나열 지역) 추가, 소기업 여부·선호 계약방식은 issue 아님 — 코드로도 충돌 항목을 소재지·중소기업여부(False일 때만)·업종·참여가능금액으로 제한. RAG 순위: 순위 기준(과업 일치 > 자격 충돌 > 예산 > 추가요청) 명시, 자격 플래그는 프로필과 직접 충돌하는 것만, '확인 필요' 빈 근거 금지(C005: 참가 가능 2건이 1·2위, 지역제한 6건 정확히 표시). 평가항목: 펴진 배점표 읽기·합계 확인. 검색 문장: 공고명 어휘로 |
+| 10/29 | 검증 자격 청크 섹션 우선 선택 | 검색만으로는 부적격 근거를 놓침(놓친 6건 중 4건은 근거 청크가 입력에 없었음) → '참가자격' 섹션 청크 → 지역제한·대기업·중견 등 핵심 문장 청크 → 검색 순으로 6개. 플래그 재현율 0.54 → 0.97 (`backend/agents/verify.py`) |
+
 ## ▶️ PoC 실행
 
 ```powershell
@@ -117,7 +163,7 @@ uv sync                                        # Python 3.11 + 패키지 설치
 uv sync --extra rag                            # (선택) BGE-M3 임베딩·리랭커 — .env에 EMBEDDING_PROVIDER=bge
 uv run python scripts/seed_companies.py        # data/companies/*.json → data/app.db
 uv run uvicorn backend.server:app --port 8000  # 화면: http://localhost:8000 (C001~C010 / 비밀번호 1)
-uv run pytest                                  # 테스트 53건 (실제 LLM은 호출하지 않음)
+uv run pytest                                  # 테스트 69건 (실제 LLM은 호출하지 않음)
 ```
 
 ```powershell
@@ -125,10 +171,14 @@ uv run python scripts/run_demo.py                                   # 최소 실
 uv run python scripts/run_demo.py --pipeline --questions            # 업체별 인터뷰 문항 보기 (LLM 생성 또는 기본)
 uv run python scripts/run_demo.py --pipeline --answers "note=시설 공사는 빼 주세요"  # 추천 Worker + 인터뷰 답
 uv run python scripts/check_env.py                                  # Azure OpenAI 연결 확인
+uv run python scripts/eval_verify.py snapshot                       # 검증 평가: 업체별 상위 5건 고정 + 라벨 템플릿(data/eval/)
+uv run python scripts/eval_verify.py eval --runs 3                  # 라벨 채운 뒤 검증 전후 nDCG·P@3·부적격 하위 배치율·플래그 정밀도
 ```
 
 - Azure 키가 없으면 **룰 모드**로 동작합니다 (인터뷰 = 기본 문항, 추천 = 룰 순위·근거, 체크리스트 = 공고 필드·공통 항목, 평가항목 = 기술·가격 평가 비율 필드). `.env.example`을 `.env`로 복사해 키를 넣으면 AI 단계가 모두 켜지고, 상위 10건 공고서 PDF를 나라장터에서 내려받습니다(`FETCH_PDFS=1`).
+- **다른 PC에서 받을 때**: 공고 벡터(`data/emb_cache.npz`)와 공고서 청크 벡터(`data/chunk_vecs/`)는 git에 포함돼 임베딩을 다시 계산하지 않는다. 단 BGE-M3·리랭커 모델(약 6.4GB, `~/.cache/huggingface`)은 검색 문장 임베딩·리랭크에 필요해 처음 1회 내려받는다(또는 그 폴더를 복사). 공고서 PDF는 첫 추천 때 나라장터에서 내려받는다.
 - `EMBEDDING_PROVIDER=keyword`(기본)면 의미 검색·리랭크 대신 키워드 검색으로 동작합니다. `bge`는 첫 실행에 공고 443건 벡터 계산(CPU 2-3분) 후 캐시를 씁니다. PDF 청크 검색까지 BGE-M3로 하려면 `CHUNK_EMBEDDING=1`(CPU에서는 추천 1회에 수 분).
+- **LangSmith 추적**: `.env`에 `LANGSMITH_TRACING=true`와 `LANGSMITH_API_KEY`를 넣으면, 추천 1회가 트레이스 하나(`proposal_graph`, 태그·메타데이터 = 업체ID)로 기록된다. 트리 안에는 Supervisor·Worker 노드, LLM 호출(`llm:<출력 스키마>`), 검색·RAG 도구(`hybrid_search`·`rerank`·`tender_chunks`·`retrieve_for_company`·`check_evidence_sources`·`confirm_issues`)가 함께 보인다(`backend/tracing.py`). 테스트는 트레이스를 보내지 않는다.
 - 공고는 `data/raw/tenders_202605.json`(공고파일 폴더 사본)을 쓰며, 같은 공고번호의 변경 차수는 마지막 차수만 남기고 취소공고는 제외합니다 (500건 → 유효 443건).
 - 지역 제한 공고는 `data/region_limits.csv`에 허용 시·도를 적기 전까지 보수적으로 제외됩니다.
 
