@@ -133,7 +133,10 @@
   .stage .step-name { margin-top: 6px; font-weight: 600; }
   .stage .num { margin-top: 4px; font-family: var(--mono); font-size: 26px; font-weight: 600; line-height: 1.2; }
   .stage .lbl { font-size: 12px; color: var(--sub); }
-  .stage.active { border-color: var(--ink); }
+  .stage.active { border-color: var(--ai); box-shadow: 0 0 0 3px var(--ai-bg); animation: pulse 1.6s ease-in-out infinite; }
+  .stage.active .lbl { color: var(--ai); }
+  @keyframes pulse { 50% { box-shadow: 0 0 0 6px var(--ai-bg); } }
+  .stage.done .step-no::after { content: "✓"; margin-left: auto; color: var(--ai); font-weight: 700; }
   .stage.ai.done { background: var(--ai-bg); border-color: var(--ai-line); }
   .stage.rule.done { background: var(--soft); }
   .bar { height: 4px; background: var(--line); border-radius: 4px; overflow: hidden; margin-top: 16px; }
@@ -585,7 +588,7 @@ function fillSynonyms(sem) {
 /* ---------- 3. 추천 ---------- */
 function setStage(id, value, cls) {
   const el = $(id);
-  el.querySelector(".num").textContent = value;
+  el.querySelector(".num").innerHTML = cls === "active" && value === "…" ? '<span class="spinner"></span>' : esc(String(value));
   el.classList.remove("done", "active");
   if (cls) el.classList.add(cls);
 }
@@ -662,6 +665,59 @@ $("runBtn").onclick = async () => {
   }
 };
 
+// 추천 실행 중 1초마다 서버의 진행 상황(끝난 그래프 노드)을 읽어 단계 카드를 하나씩 채운다
+const PROGRESS_STEPS = [  // [이 노드가 끝나면, 진행률, 다음 안내]
+  [null, 10, "자격 필터: 업종·지역·예산·인터뷰 조건으로 참여할 수 없는 공고를 거르는 중"],
+  ["filter_and_score", 25, "의미 검색: BGE-M3·BM25·룰 순위로 후보를 찾는 중"],
+  ["search", 40, "리랭크: 리랭커가 상위 후보를 다시 정렬하는 중"],
+  ["rerank", 55, "공고서 근거 순위: 상위 공고 PDF를 읽고 LLM이 근거와 함께 순위를 매기는 중"],
+  ["rag_recommend", 85, "추천 검증: 검증 에이전트가 상위 후보의 참가 자격을 다시 확인하는 중"],
+  ["verify_recommendations", 98, "결과 정리 중"],
+];
+function showProgress(p, sec) {
+  const done = new Set(p.done), info = p.info || {};
+  const step = PROGRESS_STEPS.filter(([n]) => !n || done.has(n)).pop();
+  $("progressBar").style.width = step[1] + "%";
+  $("progressText").innerHTML = `<span class="spinner"></span>${esc(step[2])} <span class="mono">(${sec}초)</span>`;
+  if (done.has("filter_and_score")) {
+    setStage("st2", info.hard_pass, "done");
+    $("st2Label").textContent = `건 통과 (${info.total}건 중)`;
+  } else setStage("st2", "…", "active");
+  if (done.has("rerank")) {
+    setStage("st3", info.top, "done");
+    $("st3Label").textContent = `건 선별${info.rerank === "applied" ? " · 리랭크" : ""}`;
+  } else if (done.has("filter_and_score")) {
+    setStage("st3", "…", "active");
+    $("st3Label").textContent = done.has("search") ? "리랭크 중" : "의미 검색 중";
+  }
+  if (done.has("rag_recommend")) {
+    setStage("st4", info.recs, info.rag_status === "llm" ? "done" : "");
+    $("st5Label").textContent = RAG_LABEL[info.rag_status] || "건";
+  } else if (done.has("rerank")) {
+    setStage("st4", "…", "active");
+    $("st5Label").textContent = "PDF 근거 읽는 중";
+  }
+  if (done.has("rag_recommend") && !done.has("verify_recommendations")) {
+    setStage("st5", "…", "active");
+    $("st6Label").textContent = "자격 재확인 중";
+  }
+}
+function pollProgress(threadId) {
+  const t0 = Date.now();
+  let busy = false;
+  const tick = async () => {
+    if (busy) return;
+    busy = true;
+    try {
+      const p = await api(withToken(`/api/progress?thread_id=${encodeURIComponent(threadId)}`));
+      if (state.running && state.threadId === threadId) showProgress(p, Math.round((Date.now() - t0) / 1000));
+    } catch (e) { /* 진행 표시는 실패해도 추천은 계속 */ }
+    busy = false;
+  };
+  const id = setInterval(tick, 1000);
+  return () => clearInterval(id);
+}
+
 async function submitInterview(answers) {
   if (state.running || !state.threadId) return;
   state.running = true;
@@ -671,10 +727,11 @@ async function submitInterview(answers) {
   setStage("st1", nCond || "–", "done");
   $("st1Label").textContent = nCond ? "개 조건 반영" : "건너뜀 (기본 조건)";
   setStage("st2", "…", "active");
-  $("progressBar").style.width = "30%";
-  $("progressText").innerHTML = '<span class="spinner"></span>자격 필터 → 의미 검색·리랭크 → 공고서 근거 순위 → 검증 중 (LLM 연결 시 PDF 다운로드로 1~2분 걸릴 수 있습니다)';
+  showProgress({ done: [], info: {} }, 0);
+  const stopPoll = pollProgress(state.threadId);
   try {
     const r = await answerInterview(answers);
+    stopPoll();
     const f = r.funnel, isLlm = r.rag_status === "llm", s = r.search || {}, v = r.verification;
     setStage("st2", f.hard_pass, "done");
     $("st2Label").textContent = `건 통과 (${f.total}건 중)`;
@@ -698,6 +755,7 @@ async function submitInterview(answers) {
     $("runBtn").textContent = "다시 추천";
     renderResults();
   } catch (e) {
+    stopPoll();
     $("progressText").textContent = "오류: " + e.message;
     $("progressBar").style.width = "0%";
   } finally {
