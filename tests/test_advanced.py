@@ -241,6 +241,32 @@ def test_semantic_with_reranker_failure(monkeypatch):
     assert rr["rerank"] == "skipped" and "download" in rr["rerank_reason"] and rr["order"] == r["order"]
 
 
+def test_body_ranking(monkeypatch):
+    import backend.tools.retrieval as retrieval
+
+    monkeypatch.setattr(config, "EMBEDDING_PROVIDER", "bge")
+    monkeypatch.setattr(config, "BODY_SEARCH", True)
+    monkeypatch.setattr(retrieval, "_bge", lambda: _FakeModel())
+    monkeypatch.setattr(search, "body_search", lambda q, ids: [("B", 0.9), ("C", 0.5)])  # A는 청크 없음
+    r = search.hybrid_search(DOCS, "행사 축제 운영")
+    assert r["lists"] == ["bm25", "dense", "body"]
+    assert r["scores"]["B"]["body"] == 0.9 and r["scores"]["A"]["body"] is None
+
+
+def test_body_ranking_db_failure(monkeypatch):
+    import backend.tools.retrieval as retrieval
+
+    def no_db(q, ids):
+        raise RuntimeError("pgvector 사용 불가")
+
+    monkeypatch.setattr(config, "EMBEDDING_PROVIDER", "bge")
+    monkeypatch.setattr(config, "BODY_SEARCH", True)
+    monkeypatch.setattr(retrieval, "_bge", lambda: _FakeModel())
+    monkeypatch.setattr(search, "body_search", no_db)
+    r = search.hybrid_search(DOCS, "행사 축제 운영")
+    assert r["path"] == "semantic" and r["lists"] == ["bm25", "dense"]
+
+
 def test_rrf():
     fused = search.rrf({"a": ["X", "Y"], "b": ["Y", "X"]})
     assert fused["X"] == pytest.approx(1 / 61 + 1 / 62) == pytest.approx(fused["Y"])
@@ -261,7 +287,20 @@ def test_chunk_search_bm25_only_without_embedding(monkeypatch):
     assert "도로" not in " ".join(c["text"] for c in out)  # 키워드 겹침 없는 청크는 BM25만으로는 안 나온다
 
 
-def test_chunk_search_hybrid_caches_per_tender(monkeypatch, tmp_path):
+@pytest.fixture
+def fake_store(monkeypatch):
+    """pgvector 대신 메모리 dict (DB 없이 retrieval 로직만 시험). {(공고번호, 해시): 벡터}."""
+    from backend.db import vector_store
+
+    db = {}
+    monkeypatch.setattr(vector_store, "load", lambda no, keys: {k: db[(no, k)] for k in keys if (no, k) in db})
+    monkeypatch.setattr(vector_store, "save", lambda no, rows, keep: db.update({(no, k): v for k, _, v in rows}))
+    monkeypatch.setattr(config, "EMBEDDING_PROVIDER", "bge")
+    monkeypatch.setattr(config, "CHUNK_EMBEDDING", True)
+    return db
+
+
+def test_chunk_search_hybrid_caches_per_tender(monkeypatch, fake_store):
     import backend.tools.retrieval as retrieval
 
     calls = []
@@ -271,19 +310,16 @@ def test_chunk_search_hybrid_caches_per_tender(monkeypatch, tmp_path):
             calls.append(len(texts))
             return super().encode(texts, **kw)
 
-    monkeypatch.setattr(config, "EMBEDDING_PROVIDER", "bge")
-    monkeypatch.setattr(config, "CHUNK_EMBEDDING", True)
-    monkeypatch.setattr(config, "CHUNK_VEC_DIR", tmp_path)
     monkeypatch.setattr(retrieval, "_bge", lambda: Model())
     out, path = retrieval.retrieve_for_company(CHUNKS, {"역량키워드": []}, k=1, query="행사 운영", tender_no="T1")
-    assert path == "hybrid" and (tmp_path / "T1.npz").exists()
+    assert path == "hybrid" and len(fake_store) == 3
     assert all(c["match"]["dense"] is not None for c in out)
-    retrieval.chunk_vectors("T1", CHUNKS)  # 두 번째는 파일에서 읽기만
+    retrieval.chunk_vectors("T1", CHUNKS)  # 두 번째는 DB에서 읽기만
     assert calls[0] == 3 and calls.count(3) == 1  # 청크 3개는 한 번만 임베딩 (나머지 호출은 질의 1개씩)
 
 
-def test_retrieve_reuses_saved_chunk_vectors(monkeypatch, tmp_path):
-    """검증·체크리스트·평가항목의 retrieve(tender_no=...)는 RAG가 저장한 공고별 청크 벡터를 다시 쓴다."""
+def test_retrieve_reuses_saved_chunk_vectors(monkeypatch, fake_store):
+    """검증·체크리스트·평가항목의 retrieve(tender_no=...)는 RAG가 저장한 청크 벡터를 다시 쓴다."""
     import backend.tools.retrieval as retrieval
     from backend.tools import search
 
@@ -294,32 +330,102 @@ def test_retrieve_reuses_saved_chunk_vectors(monkeypatch, tmp_path):
             calls.append(len(texts))
             return super().encode(texts, **kw)
 
-    monkeypatch.setattr(config, "EMBEDDING_PROVIDER", "bge")
-    monkeypatch.setattr(config, "CHUNK_EMBEDDING", True)
-    monkeypatch.setattr(config, "CHUNK_VEC_DIR", tmp_path)
     monkeypatch.setattr(retrieval, "_bge", lambda: Model())
     monkeypatch.setattr(search, "_VEC_CACHE", {})
     retrieval.chunk_vectors("T1", CHUNKS)  # RAG 단계가 저장
     calls.clear()
     out = retrieval.retrieve(CHUNKS, "입찰 참가자격", k=2, tender_no="T1")
-    assert len(out) == 2 and calls == [1]  # 질의 1개만 임베딩, 청크는 파일에서 읽음
+    assert len(out) == 2 and calls == [1]  # 질의 1개만 임베딩, 청크는 DB에서 읽음
     calls.clear()
     retrieval.retrieve(CHUNKS, "입찰 참가자격 제출", k=2)  # tender_no 없으면 청크를 임베딩
     assert 3 in calls
 
 
-def test_retrieve_falls_back_to_keywords_when_embedding_fails(monkeypatch, tmp_path):
+def test_retrieve_falls_back_to_keywords_when_embedding_fails(monkeypatch, fake_store):
     import backend.tools.retrieval as retrieval
 
     def broken():
         raise RuntimeError("모델 로드 실패")
 
-    monkeypatch.setattr(config, "EMBEDDING_PROVIDER", "bge")
-    monkeypatch.setattr(config, "CHUNK_EMBEDDING", True)
-    monkeypatch.setattr(config, "CHUNK_VEC_DIR", tmp_path)
     monkeypatch.setattr(retrieval, "_bge", broken)
     out = retrieval.retrieve(CHUNKS, "입찰 참가자격", k=1, tender_no="T1")
     assert out and "참가자격" in out[0]["text"]
+
+
+def test_pgvector_unavailable_uses_bm25_and_retries(monkeypatch):
+    """DB에 연결할 수 없으면 청크 검색은 BM25만, 실패는 RETRY_SEC 동안 기억했다가 지나면 다시 연결을 시도한다."""
+    import backend.tools.retrieval as retrieval
+    from backend.db import vector_store
+
+    monkeypatch.setattr(config, "EMBEDDING_PROVIDER", "bge")
+    monkeypatch.setattr(config, "CHUNK_EMBEDDING", True)
+    monkeypatch.setattr(config, "PGVECTOR_DSN", "postgresql://x:x@127.0.0.1:1/none")
+    monkeypatch.setattr(vector_store, "_CONN", None)
+    monkeypatch.setattr(vector_store, "_ERROR", None)
+    monkeypatch.setattr(retrieval, "_bge", lambda: _FakeModel())
+    out, path = retrieval.retrieve_for_company(CHUNKS, {"역량키워드": ["축제"]}, k=1, query="행사 운영", tender_no="T1")
+    assert path == "bm25" and out and all(c["match"]["dense"] is None for c in out)
+    failed_at = vector_store._ERROR[0]
+    with pytest.raises(RuntimeError):
+        vector_store._conn()  # 대기 시간 안: 연결을 다시 시도하지 않고 바로 실패
+    assert vector_store._ERROR[0] == failed_at
+    monkeypatch.setattr(vector_store, "_ERROR", (failed_at - vector_store.RETRY_SEC - 1, "옛 실패"))
+    with pytest.raises(RuntimeError):
+        vector_store._conn()  # 대기 시간이 지나면 다시 시도 (여기서는 또 실패)
+    assert vector_store._ERROR[0] > failed_at
+
+
+def _pg_or_skip(monkeypatch):
+    """실제 pgvector DB (docker compose up -d)가 있을 때만. 테스트 전용 모델명으로 행을 분리하고 끝나면 지운다."""
+    from backend.db import vector_store
+
+    monkeypatch.setattr(config, "EMBEDDING_MODEL", "test/fake-1024")
+    monkeypatch.setattr(vector_store, "_CONN", None)
+    monkeypatch.setattr(vector_store, "_ERROR", None)
+    try:
+        conn = vector_store._conn()
+    except RuntimeError as e:
+        pytest.skip(str(e))
+    conn.execute("DELETE FROM tender_chunks WHERE model = %s", (config.EMBEDDING_MODEL,))
+    return vector_store, conn
+
+
+class _FakeModel1024:
+    def encode(self, texts, normalize_embeddings=True, **kw):
+        out = np.zeros((len(texts), 1024), dtype=np.float32)
+        for i, t in enumerate(texts):
+            out[i, 1 if "도로" in t else 0] = 1.0
+        return out
+
+
+def test_pgvector_stores_chunks_once_and_searches(monkeypatch):
+    import backend.tools.retrieval as retrieval
+
+    vector_store, conn = _pg_or_skip(monkeypatch)
+    calls = []
+
+    class Model(_FakeModel1024):
+        def encode(self, texts, **kw):
+            calls.append(len(texts))
+            return super().encode(texts, **kw)
+
+    monkeypatch.setattr(config, "EMBEDDING_PROVIDER", "bge")
+    monkeypatch.setattr(config, "CHUNK_EMBEDDING", True)
+    monkeypatch.setattr(retrieval, "_bge", lambda: Model())
+    try:
+        chunks = [{**c, "section": "도로" if "도로" in c["text"] else "일반"} for c in CHUNKS]
+        retrieval.chunk_vectors("T1", chunks)
+        vecs = retrieval.chunk_vectors("T1", chunks)  # 두 번째는 DB에서 읽기만
+        assert calls == [3] and vecs.shape == (3, 1024)
+        q = Model().encode(["도로 공사"])[0]
+        hit = vector_store.search(q, k=1)
+        assert hit[0]["bidNtceNo"] == "T1" and "도로" in hit[0]["text"] and hit[0]["score"] == pytest.approx(1.0)
+        assert all(r["section"] == "일반" for r in vector_store.search(q, k=5, section="일반"))
+        retrieval.chunk_vectors("T1", chunks[:2] + [{"file": "a.pdf", "page": 4, "text": "평가 방법 배점"}])
+        n = conn.execute("SELECT count(*) FROM tender_chunks WHERE model = %s", (config.EMBEDDING_MODEL,)).fetchone()[0]
+        assert n == 3  # 청킹이 바뀌면 옛 청크는 지우고 새 청크만 추가
+    finally:
+        conn.execute("DELETE FROM tender_chunks WHERE model = %s", (config.EMBEDDING_MODEL,))
 
 
 # ---------- 키워드 의미 확장 (인터뷰 주력 분야·유사 표현) ----------

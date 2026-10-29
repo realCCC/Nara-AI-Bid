@@ -30,12 +30,30 @@ LangGraph 그래프 하나(`backend/graphs/proposal.py`)가 규칙 기반 Superv
 | ① 자격 필터 | 룰 | PDF 보유·업종·참가 제한·지역·예산(H1~H6) + 인터뷰 조건(I1) | `tools/rules.py` |
 | ② 소프트 점수 | 룰 + **AI** | S1 업종 · S2 역량 키워드(문자열 일치와 BGE-M3 의미 유사도 중 큰 값) · S3 예산 규모 · S4 선호 계약방식 | `tools/rules.py`, `tools/search.py` |
 | ③ 의미 검색·리랭크 | **AI** | LLM이 쓴 검색 문장으로 dense(BGE-M3) + BM25 + 룰 순위를 RRF로 합치고 bge-reranker로 상위 15건 재정렬 → 상위 10건 | `graphs/recommend.py` |
-| ④ 공고서 근거 순위 (RAG) | **AI** | 상위 10건 공고서 PDF 청크를 BM25 + BGE-M3 하이브리드(RRF)로 찾아 LLM이 순위·근거를 매김 (청크 벡터는 상위 공고만 계산해 공고별 저장, `scripts/warm_chunk_vectors.py`로 미리 계산). 근거 인용은 원문과 대조해 통과한 것만 표시 | `agents/rag.py`, `tools/evidence.py` |
+| ④ 공고서 근거 순위 (RAG) | **AI** | 상위 10건 공고서 PDF 청크를 BM25 + BGE-M3 하이브리드(RRF)로 찾아 LLM이 순위·근거를 매김 (청크 벡터는 상위 공고만 계산해 벡터 DB(pgvector)에 저장, `scripts/warm_chunk_vectors.py`로 미리 계산). 근거 인용은 원문과 대조해 통과한 것만 표시 | `agents/rag.py`, `tools/evidence.py` |
 | ⑤ 추천 검증 | **AI** | 검증 서브에이전트가 상위 5건을 재평가. 추천 단계와 다른 근거(참가 조건 필드 + 자격 쪽 공고서 청크)로 업체가 충족 못 할 조건(issues)을 찾고, 원문 대조를 통과한 issue가 있는 공고는 뒤로 보냄 (실패하면 원순위 유지) | `agents/verify.py`, `tools/llm.py` |
 | ⑥ 담당자 확인 체크리스트 | **AI** · HITL | 공고 필드 조건 + LLM이 공고서에서 뽑은 참가자격·실적·제출서류·일정(원문 대조) + AI 자격 의심 사항·검증 에이전트 issue. 전부 체크해야 선택 확정, 이력에 저장 | `tools/checklist.py` |
 | ⑦ 제안서 초안 | 룰 + **AI** | LLM이 평가항목·배점·과업 기간을 추출하고 고정 템플릿에 채움. 채울 수 없는 자리는 `[확인 필요]` | `tools/proposal.py` |
 
 - LLM·임베딩이 없거나 출력 검증에 실패하면 단계마다 룰·기본값으로 폴백한다 (화면에 "생략"·"룰 순위로 대체" 등으로 표시).
+
+### 벡터 DB는 어디에 쓰이나
+
+넓게 거를 때는 가벼운 **공고 메타 정보**로 비교하고, 좁혀진 10건은 **공고서 본문(벡터 DB)**을 직접 본다.
+
+| 구간 | 비교 대상 | 방법 | 벡터 저장 | 벡터 DB |
+|------|-----------|------|-----------|---------|
+| ①~③ 후보 선정 (443건 → 10건) | 업체정보 ↔ 공고 메타 문장(공고명·물품·분류·기관) | 룰 + BM25 + BGE-M3 → RRF → 리랭커 | `data/emb_cache.npz` | 사용 안 함 |
+| ④ RAG 순위·근거 (10건 안) | 업체 역량·검색 문장 ↔ 공고서 PDF 조항 청크 | BM25 + BGE-M3 → RRF, LLM 순위 | pgvector `tender_chunks` | 사용 |
+| ⑤ 추천 검증 (상위 5건) | 업체 프로필 ↔ 참가자격 조항 청크 | 섹션 우선 + 검색, LLM 재평가 | 〃 | 사용 |
+| ⑥ 체크리스트 · ⑦ 제안서 | 고른 공고의 자격·서류·평가 조항 | 검색 → LLM 추출 | 〃 | 사용 (순위와 무관) |
+
+- **어떤 공고가 목록에 들지**는 벡터 DB 없이 정하고, **목록 안 순서와 근거**는 벡터 DB에서 찾은 공고서 조항으로 정한다 (LLM 키가 있을 때).
+- 룰·BM25는 벡터화가 아니다(값 비교·단어 일치). 벡터를 쓰는 건 BGE-M3뿐이다.
+- 전체 공고 PDF를 미리 받아 벡터화하지 않는다. 공고가 처음 상위 10건에 들 때 청크를 임베딩해 DB에 넣고, 다음부터는 DB에서 읽기만 한다.
+- 테이블은 청크마다 공고번호·파일·페이지·섹션·원문·임베딩 모델명 + `vector(1024)`, HNSW(코사인) 인덱스 (`backend/db/vector_schema.sql`). 모델명을 함께 저장해 모델을 바꿔도 벡터가 섞이지 않는다. `vector_store.search()`로 여러 공고를 가로지르는 조항 검색(공고·섹션 필터)도 할 수 있다.
+- **DB를 못 쓰면** 청크 검색은 BM25만으로 하고 추천은 계속된다. 연결 실패 후 30초마다 다시 시도한다.
+- **BGE-M3를 못 쓰면** ①~③에서도 의미 비교만 빠진다: S2는 문자열 일치(키워드·유사어)만, 검색은 BM25 + 룰 순위, 리랭크는 생략.
 
 ### 업체 역량키워드는 어떻게 쓰이나
 
@@ -75,7 +93,8 @@ LangGraph 그래프 하나(`backend/graphs/proposal.py`)가 규칙 기반 Superv
 |-----|------|
 | LLM | Azure OpenAI gpt-4.1 (structured output) |
 | Agent | LangGraph (+ LangChain), 규칙 기반 Supervisor + 추천 Worker 서브그래프, `langgraph.json`(LangGraph Server 진입점) |
-| 검색 | BGE-M3 임베딩(로컬, `data/emb_cache.npz` 벡터 캐시) + BM25(kiwipiepy 형태소) + RRF, bge-reranker-v2-m3 |
+| 검색 | BGE-M3 임베딩(로컬, `data/emb_cache.npz` 공고 메타 벡터 캐시) + BM25(kiwipiepy 형태소) + RRF, bge-reranker-v2-m3 |
+| 벡터 DB | PostgreSQL 16 + pgvector (Docker, `docker-compose.yml`) — 공고서 PDF 청크 벡터·메타데이터, HNSW 인덱스 |
 | PDF | PyMuPDF (조항 구조 청킹, 300~800자) |
 | 작업 이력 DB | SQLite (업체·추천 결과·선택·담당자 체크리스트·초안) |
 | 서버 | FastAPI + uvicorn, Jinja2(제안서 템플릿, autoescape) |
@@ -90,13 +109,15 @@ backend/
   graphs/              proposal.py (Supervisor·전체 그래프 조립), recommend.py (추천 Worker 서브그래프)
   agents/              에이전트(Worker)별 노드: interview(HITL ⓪) · rag · verify · selection(HITL ①) · draft · state(공유 State)
   tools/               interview · keyword_profile · rules · search · retrieval · pdf · evidence · checklist · proposal · llm
-  db/                  schema.sql, repository.py (SQLite)
+  db/                  schema.sql, repository.py (SQLite) · vector_schema.sql, vector_store.py (pgvector 청크 벡터)
   templates/           proposal.html.j2 (제안서 초안)
 frontend/index.html    화면 (로그인 → 맞춤 추천 → 공고 선택 → 제안서 초안 → 이전 작업)
 POC_예시_html/         초기 화면 시안 (poc_screen.html)
 scripts/               run_demo.py · seed_companies.py · check_env.py · validate_data.py · eval_verify.py
-tests/                 룰·최소 실행 경로·DB·그래프 E2E·인터뷰·의미 프로필·체크리스트·검증 평가·청킹 (69건)
+                       warm_chunk_vectors.py (청크 벡터 미리 계산) · migrate_chunk_vectors.py (npz → pgvector)
+tests/                 룰·최소 실행 경로·DB·그래프 E2E·인터뷰·의미 프로필·체크리스트·검증 평가·청킹·벡터 DB (71건)
 data/                  공고 원본·업체 JSON·지역 제한·SQLite·벡터 캐시·샘플(sample/)
+docker-compose.yml     pgvector 컨테이너 (청크 벡터 DB)
 공고파일/               공공데이터포털에서 받은 공고 500건 원본 (→ data/raw/ 사본)
 docs/                  1~7 단계 문서
 ```
@@ -155,16 +176,19 @@ docs/                  1~7 단계 문서
 | 10/29 | 정답셋 2차 검토 | 공고서 자격 조항 전체와 다시 대조해 4건 수정(추천→부적격 1: 20억 미만 SW사업 대기업·중견 참여 불가 / 추천→적격-비추천 3: 영상 직접생산·영상 실적 요구, 공고서 없음). 라벨 분포 추천 23·적격-비추천 14·부적격 13 |
 | 10/29 | 에이전트 프롬프트 개선 | 공통: 청크 앞 `(파일 p.쪽) [섹션]` 표시를 인용에 넣지 않게(출처 대조도 표시를 떼고 비교). 검증: 충돌 예시(대기업·중견 참여 불가, 필수 업종 등록, 입찰방법 문장 속 지역제한, '및' 나열 지역) 추가, 소기업 여부·선호 계약방식은 issue 아님 — 코드로도 충돌 항목을 소재지·중소기업여부(False일 때만)·업종·참여가능금액으로 제한. RAG 순위: 순위 기준(과업 일치 > 자격 충돌 > 예산 > 추가요청) 명시, 자격 플래그는 프로필과 직접 충돌하는 것만, '확인 필요' 빈 근거 금지(C005: 참가 가능 2건이 1·2위, 지역제한 6건 정확히 표시). 평가항목: 펴진 배점표 읽기·합계 확인. 검색 문장: 공고명 어휘로 |
 | 10/29 | 검증 자격 청크 섹션 우선 선택 | 검색만으로는 부적격 근거를 놓침(놓친 6건 중 4건은 근거 청크가 입력에 없었음) → '참가자격' 섹션 청크 → 지역제한·대기업·중견 등 핵심 문장 청크 → 검색 순으로 6개. 플래그 재현율 0.54 → 0.97 (`backend/agents/verify.py`) |
+| 10/29 | 청크 벡터 DB (pgvector) | 공고별 npz 파일(`data/chunk_vecs/`) → PostgreSQL + pgvector 테이블 하나로. 벡터와 함께 공고번호·파일·페이지·섹션·원문을 저장하고 HNSW 인덱스로 여러 공고를 가로지르는 검색 가능. 기존 118건(청크 3,176개)은 다시 임베딩하지 않고 이전. DB를 못 쓰면 청크 검색은 BM25만(npz 대체 없음), 30초마다 재연결 (`backend/db/vector_store.py`) |
 | 10/29 | 추천 단계 실시간 표시 | 추천 1~3분 동안 단계 카드가 멈춰 있던 문제 → 서버가 그래프를 `stream`(서브그래프 포함)으로 돌며 끝난 노드를 기록, 화면이 1초마다 `/api/progress`를 읽어 자격 필터 → 의미 검색 → 리랭크 → 공고서 근거 순위 → 검증을 차례로 채움(진행 중 단계 강조·완료 ✓·경과 초) |
 
 ## ▶️ PoC 실행
 
 ```powershell
 uv sync                                        # Python 3.11 + 패키지 설치
-uv sync --extra rag                            # (선택) BGE-M3 임베딩·리랭커 — .env에 EMBEDDING_PROVIDER=bge
+uv sync --extra rag                            # (선택) BGE-M3 임베딩·리랭커·pgvector 클라이언트 — .env에 EMBEDDING_PROVIDER=bge
+docker compose up -d                           # (선택) 청크 벡터 DB (Docker Desktop 실행 후)
+uv run python scripts/migrate_chunk_vectors.py # (새 PC 1회) 커밋된 청크 벡터 npz → DB, 다시 임베딩하지 않음
 uv run python scripts/seed_companies.py        # data/companies/*.json → data/app.db
 uv run uvicorn backend.server:app --port 8000  # 화면: http://localhost:8000 (C001~C010 / 비밀번호 1)
-uv run pytest                                  # 테스트 69건 (실제 LLM은 호출하지 않음)
+uv run pytest                                  # 테스트 71건 (실제 LLM은 호출하지 않음, 벡터 DB 테스트는 DB 없으면 건너뜀)
 ```
 
 ```powershell
@@ -177,7 +201,7 @@ uv run python scripts/eval_verify.py eval --runs 3                  # 라벨 채
 ```
 
 - Azure 키가 없으면 **룰 모드**로 동작합니다 (인터뷰 = 기본 문항, 추천 = 룰 순위·근거, 체크리스트 = 공고 필드·공통 항목, 평가항목 = 기술·가격 평가 비율 필드). `.env.example`을 `.env`로 복사해 키를 넣으면 AI 단계가 모두 켜지고, 상위 10건 공고서 PDF를 나라장터에서 내려받습니다(`FETCH_PDFS=1`).
-- **다른 PC에서 받을 때**: 공고 벡터(`data/emb_cache.npz`)와 공고서 청크 벡터(`data/chunk_vecs/`)는 git에 포함돼 임베딩을 다시 계산하지 않는다. 단 BGE-M3·리랭커 모델(약 6.4GB, `~/.cache/huggingface`)은 검색 문장 임베딩·리랭크에 필요해 처음 1회 내려받는다(또는 그 폴더를 복사). 공고서 PDF는 첫 추천 때 나라장터에서 내려받는다.
+- **다른 PC에서 받을 때**: 공고 벡터(`data/emb_cache.npz`)와 공고서 청크 벡터(`data/chunk_vecs/`)는 git에 포함돼 임베딩을 다시 계산하지 않는다. 벡터 DB 내용은 Docker 볼륨에만 있어 git에 없으므로, `docker compose up -d` 후 `scripts/migrate_chunk_vectors.py`로 청크 벡터 npz를 DB에 옮긴다(실행 중에는 npz를 쓰지 않음). 단 BGE-M3·리랭커 모델(약 6.4GB, `~/.cache/huggingface`)은 검색 문장 임베딩·리랭크에 필요해 처음 1회 내려받는다(또는 그 폴더를 복사). 공고서 PDF는 첫 추천 때 나라장터에서 내려받는다.
 - `EMBEDDING_PROVIDER=keyword`(기본)면 의미 검색·리랭크 대신 키워드 검색으로 동작합니다. `bge`는 첫 실행에 공고 443건 벡터 계산(CPU 2-3분) 후 캐시를 씁니다. PDF 청크 검색까지 BGE-M3로 하려면 `CHUNK_EMBEDDING=1`(CPU에서는 추천 1회에 수 분).
 - **LangSmith 추적**: `.env`에 `LANGSMITH_TRACING=true`와 `LANGSMITH_API_KEY`를 넣으면, 추천 1회가 트레이스 하나(`proposal_graph`, 태그·메타데이터 = 업체ID)로 기록된다. 트리 안에는 Supervisor·Worker 노드, LLM 호출(`llm:<출력 스키마>`), 검색·RAG 도구(`hybrid_search`·`rerank`·`tender_chunks`·`retrieve_for_company`·`check_evidence_sources`·`confirm_issues`)가 함께 보인다(`backend/tracing.py`). 테스트는 트레이스를 보내지 않는다.
 - 공고는 `data/raw/tenders_202605.json`(공고파일 폴더 사본)을 쓰며, 같은 공고번호의 변경 차수는 마지막 차수만 남기고 취소공고는 제외합니다 (500건 → 유효 443건).

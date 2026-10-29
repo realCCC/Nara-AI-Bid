@@ -17,9 +17,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# BGE-M3 임베딩 (용량이 커서 선택 설치: uv sync --extra rag, EMBEDDING_PROVIDER=bge)
+# BGE-M3 임베딩 + 청크 벡터 DB(pgvector) (용량이 커서 선택 설치: uv sync --extra rag, EMBEDDING_PROVIDER=bge)
 rag = [
     "sentence-transformers>=3.0",
+    "psycopg[binary]>=3.1",
+    "pgvector>=0.3",
 ]
 
 [dependency-groups]

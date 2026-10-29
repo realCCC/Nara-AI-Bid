@@ -2,6 +2,7 @@
 
 실행경로: semantic(dense+BM25) / keyword_fallback(BM25만 — 임베딩 미설치·실패·EMBEDDING_PROVIDER=keyword).
 리랭커(bge-reranker-v2-m3)는 semantic 경로에서만 시도하고, 실패하면 생략한다.
+BODY_SEARCH=1이면 semantic 경로에서 PDF 본문 순위(pgvector 청크)도 RRF에 넣는다.
 """
 import hashlib
 import logging
@@ -100,19 +101,19 @@ def _load_disk_cache():
 
 
 def embed(texts: list[str], persist: bool = False):
-    """BGE-M3 정규화 벡터 (행렬). EMBEDDING_PROVIDER=bge + sentence-transformers 설치 필요 (아니면 예외).
+    """정규화 벡터 (행렬). EMBEDDING_PROVIDER=bge(sentence-transformers 설치) 또는 azure(LLM 키) 필요 (아니면 예외).
     persist=True(공고 문서)면 새로 계산한 벡터를 EMB_CACHE에 저장한다."""
     import numpy as np
 
-    if config.EMBEDDING_PROVIDER != "bge":
+    if not config.embedding_enabled():
         raise RuntimeError(f"EMBEDDING_PROVIDER={config.EMBEDDING_PROVIDER}")
-    from backend.tools.retrieval import _bge
+    from backend.tools.retrieval import encode
 
     _load_disk_cache()
     keys = [_key(t) for t in texts]
     todo = list(dict.fromkeys((k, t) for k, t in zip(keys, texts) if k not in _VEC_CACHE))
     if todo:
-        vecs = _bge().encode([t for _, t in todo], normalize_embeddings=True, batch_size=32)
+        vecs = encode([t for _, t in todo])
         for (k, _), v in zip(todo, vecs):
             _VEC_CACHE[k] = v
         if persist:
@@ -180,12 +181,21 @@ def rrf(rankings: dict[str, list[str]], k: int = RRF_K) -> dict[str, float]:
     return fused
 
 
+def body_search(query: str, ids: list[str]) -> list[tuple[str, float]]:
+    """PDF 본문 순위: pgvector에 저장된 공고 청크와 질의의 코사인 (공고마다 상위 BODY_TOP개 평균). 청크 없는 공고는 빠진다."""
+    from backend.db import vector_store
+
+    s = vector_store.tender_scores(embed([query])[0], ids, config.BODY_TOP)
+    return sorted(((i, round(v, 4)) for i, v in s.items()), key=lambda x: (-x[1], x[0]))
+
+
 @traced("hybrid_search", "retriever", big=("docs", "rule_order"),
         outputs=lambda r: {"path": r["path"], "reason": r["reason"], "lists": r["lists"],
                            "top10": [{"bidNtceNo": i, **r["scores"][i]} for i in r["order"][:10]]})
 def hybrid_search(docs: dict[str, str], query: str, rule_order: list[str] | None = None) -> dict:
     """dense + BM25 (+ 룰 점수 순위)를 RRF로 합친다. 반환 order는 문서 전체, scores는 단계별 점수."""
-    scores = {i: {"rule_rank": None, "dense": None, "bm25": None, "rrf": None, "rerank": None} for i in docs}
+    scores = {i: {"rule_rank": None, "dense": None, "bm25": None, "body": None, "rrf": None, "rerank": None}
+              for i in docs}
     rankings = {}
     if rule_order:
         rankings["rule"] = rule_order
@@ -204,6 +214,14 @@ def hybrid_search(docs: dict[str, str], query: str, rule_order: list[str] | None
     except Exception as e:  # 미설치·모델 로드 실패·설정 off → BM25만
         path, reason = "keyword_fallback", f"임베딩 미사용: {e}"
         log.info(reason)
+    if config.BODY_SEARCH and path == "semantic":
+        try:
+            body = body_search(query, list(docs))
+            rankings["body"] = [i for i, _ in body]
+            for i, s in body:
+                scores[i]["body"] = s
+        except Exception as e:  # DB 미기동 등 → 본문 순위 없이
+            log.info("본문 순위 생략: %s", e)
     fused = rrf(rankings)
     for i, s in fused.items():
         scores[i]["rrf"] = round(s, 5)
