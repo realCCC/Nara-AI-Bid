@@ -119,9 +119,17 @@ class VerifyResult(BaseModel):
 class Criterion(BaseModel):
     item: str
     score: float | None = None
+    sub_items: list[str] = Field([], description="이 대항목 아래 세부 평가항목 이름 (원문 그대로, 없으면 비움)")
     file: str | None = None
     page: int | None = None
     quote: str | None = None
+
+
+class Task(BaseModel):
+    text: str = Field(description="과업 내용 1문장. 원문에 있는 사실만 (예: 행사 기획 및 운영 인력 배치)")
+    file: str
+    page: int
+    quote: str = Field(description="공고서 원문 그대로 인용 (짧게)")
 
 
 class CheckItem(BaseModel):
@@ -138,7 +146,8 @@ class ChecklistResult(BaseModel):
 
 class CriteriaResult(BaseModel):
     items: list[Criterion]
-    period: str | None = Field(None, description="과업 기간. 원문에 없으면 null")
+    period: str | None = Field(None, description="과업 수행 기간 원문 그대로 (사업기간·용역기간·계약기간·과업기간 등 이름 무관, 예: 2026. 착수일 ~ 2026.10.31.). 원문에 없으면 null")
+    tasks: list[Task] = Field([], description="과업 범위·주요 과업 내용 3-8개. 원문에 없으면 비움")
 
 
 # 청크는 "- (파일 p.쪽) [섹션] 본문"으로 보여 준다 → 인용에 앞 표시가 섞이면 출처 대조에서 떨어진다
@@ -251,12 +260,15 @@ CHECKLIST_PROMPT = """아래 공고서 청크에서, 업체 담당자가 입찰 
 [청크]
 {chunks}"""
 
-CRITERIA_PROMPT = """아래 공고서 청크에서 제안서 평가항목과 배점, 과업 기간을 추출하세요.
+CRITERIA_PROMPT = """아래 공고서 청크에서 제안서 평가항목과 배점, 과업 기간, 과업 범위를 추출하세요.
 - 원문에 있는 항목만 추출하고, 항목마다 file·page·quote(원문 그대로)를 붙이세요. {quote_rule}
 - 배점표는 PDF에서 한 줄로 펴져 "평가항목 배점 평가항목 배점 …" 순서로 나올 수 있습니다. 항목명과 바로 뒤 숫자를 짝지으세요.
 - 대항목과 세부항목이 함께 있으면 대항목 기준으로 추출하세요. 기술·가격 평가 비율(예: 기술 90 / 가격 10)은 항목이 아닙니다.
 - 대항목 배점 합계는 보통 기술평가 총점(예: 90 또는 100)과 같습니다. 맞지 않으면 빠진 항목이 없는지 다시 보세요.
-- 배점이 없으면 score=null, 과업 기간이 없으면 period=null.
+- 대항목 아래 세부항목이 있으면 sub_items에 이름만 원문 그대로 넣으세요.
+- period: 사업기간·용역기간·계약기간·과업기간·수행기간처럼 이름이 달라도 과업을 수행하는 기간이면 원문 그대로 옮기세요 (입찰서·제안서 제출기간은 아님).
+- 배점이 없으면 score=null, 수행 기간이 어디에도 없으면 period=null.
+- tasks: 과업 지시서·과업 내용·과업 범위에 적힌 주요 과업을 3-8개, 항목마다 file·page·quote를 붙이세요. 원문에 없는 추측은 쓰지 마세요.
 
 [공고] {name}
 [청크]
@@ -398,3 +410,167 @@ def extract_criteria(tender: dict, chunks: list[dict]) -> dict | None:
         return None
     result = _invoke(CriteriaResult, CRITERIA_PROMPT.format(quote_rule=QUOTE_RULE, name=tender.get("bidNtceNm"), chunks=_chunks_text(chunks)))
     return result.model_dump() if result and result.items else None
+
+
+# ---------- 제안서 초안 섹션 작성 (SC-002) ----------
+class Cite(BaseModel):
+    file: str = Field(description="업체 문서 파일명 (청크 앞 표시의 값)")
+    quote: str = Field(description="업체 문서 청크 본문 그대로 인용 (짧게)")
+
+
+class Draft(BaseModel):
+    text: str = Field(description="제안서 문장 2-4개 (개조식 문체)")
+    cites: list[Cite] = Field([], description="업체 문서 근거. 일반론으로 쓴 문장이면 비움")
+
+
+class UnderstandingDraft(BaseModel):
+    strategy: Draft = Field(description="사업 목적 이해와 추진 전략")
+
+
+class CompanyDraft(BaseModel):
+    certifications: Draft | None = Field(None, description="보유 인증·면허·등록 나열. 업체 문서·프로필에 없으면 null")
+    vision: Draft | None = Field(None, description="비전·차별화 포인트")
+
+
+class SubItemDraft(BaseModel):
+    name: str = Field(description="세부 평가항목 이름 (입력 그대로)")
+    text: Draft
+
+
+class ItemDraft(BaseModel):
+    plan: Draft = Field(description="이 평가항목에 대한 수행 방안")
+    evidence: Draft | None = Field(None, description="이 평가항목을 뒷받침하는 업체 근거(실적·인력·인증). 업체 문서에 없으면 null")
+    sub_items: list[SubItemDraft] = Field([], description="세부 평가항목마다 대응 내용 (입력에 세부항목이 없으면 비움)")
+
+
+class Phase(BaseModel):
+    step: Literal["착수", "준비·기획", "수행", "결과 보고"]
+    content: str = Field(description="주요 내용 1문장")
+    period: str | None = Field(None, description="기간 (예: 1개월차, 2주). 과업 기간을 모르면 null")
+
+
+class Staffing(BaseModel):
+    role: str = Field(description="보유 인력의 역할명 (입력 그대로)")
+    count: int | None = Field(None, description="투입 인원. 보유 인원을 넘지 않게")
+    duty: str = Field(description="담당 업무 1문장")
+
+
+class PlanDraft(BaseModel):
+    phases: list[Phase] = Field(description="착수·준비·기획·수행·결과 보고 4단계")
+    staffing: list[Staffing] = Field([], description="보유 인력 역할별 투입 계획")
+    pm: Draft | None = Field(None, description="총괄 책임자(PM) 이름·경력. 업체 문서에 없으면 null")
+
+
+PROPOSAL_COMMON = """당신은 공공 입찰 제안서 작성을 돕는 컨설턴트입니다. 아래 공고 정보와 업체 정보만 보고 제안서 초안을 쓰세요.
+- 업체에 관한 사실(인증·면허명, 사람 이름, 경력 연수, 실적 금액·수치, 장비)은 [업체 프로필]·[업체 문서]에 있는 것만 쓰세요. 없는 사실은 절대 지어내지 마세요.
+- 업체 문서에 근거한 문장이면 cites에 file과 quote를 붙이세요. {quote_rule}
+- 근거 없이 일반적인 수행 방법으로 쓴 문장은 cites를 비우세요 (화면에 'AI 초안·검토 필요'로 표시됩니다).
+- 공고서 제안서 문체(~함, ~임, ~제시)로 간결하게 쓰세요.
+
+[공고] {name} / 수요기관: {agency} / 과업 기간: {period}
+[과업 범위]
+{tasks}
+[업체 프로필]
+{company}
+[업체 문서]
+{docs}
+
+[작성할 내용]
+"""
+
+UNDERSTANDING_TASK = "Ⅱ. 사업 이해 — 사업 목적 이해와 추진 전략 (과업 범위를 업체의 실적·역량과 연결해서)."
+COMPANY_TASK = """Ⅲ. 회사 소개
+- certifications: 업체 문서·프로필에 있는 인증·면허·등록만 나열 (없으면 null, 일반론 금지)
+- vision: 비전·차별화 포인트. 이 공고와 관련된 강점 위주로"""
+ITEM_TASK = """Ⅳ. 수행 방안 — 평가항목 "{item}"{score}
+세부 평가항목: {sub_items}
+- plan: 이 평가항목에서 높은 점수를 받기 위한 수행 방안
+- evidence: 이 항목을 뒷받침하는 업체 실적·인력·인증 (업체 문서·프로필에 없으면 null)
+- sub_items: 세부 평가항목마다 대응 내용 1-2문장 (name은 위 목록 그대로)"""
+PLAN_TASK = """Ⅴ. 추진 일정·Ⅵ. 조직 구성
+- phases: 착수 / 준비·기획 / 수행 / 결과 보고 4단계의 주요 내용과 기간 (과업 기간 안에서 나눠서)
+- staffing: 보유 인력 {staff} 의 역할별 투입 인원(보유 인원 이하)과 담당 업무
+- pm: 총괄 책임자(PM) 이름과 경력 (업체 문서에 없으면 null)"""
+
+
+def _proposal_prompt(task: str, tender: dict, criteria: dict, company: dict, docs: list[dict]) -> str:
+    tasks = "\n".join(f"- {t['text']}" for t in criteria.get("tasks") or []) or "(추출된 과업 없음 — 공고명으로 판단)"
+    profile = {k: v for k, v in company.items() if k not in ("비밀번호", "유사어")}
+    return PROPOSAL_COMMON.format(
+        quote_rule=QUOTE_RULE, name=tender.get("bidNtceNm"), agency=tender.get("dminsttNm") or "-",
+        period=criteria.get("period") or "공고서에 없음", tasks=tasks, company=json.dumps(profile, ensure_ascii=False),
+        docs=_chunks_text(docs) if docs else "(업체 문서 없음 — 업체 프로필만 근거)") + task
+
+
+def draft_understanding(tender: dict, criteria: dict, company: dict, docs: list[dict]) -> dict | None:
+    r = _invoke(UnderstandingDraft, _proposal_prompt(UNDERSTANDING_TASK, tender, criteria, company, docs))
+    return r.model_dump() if r else None
+
+
+def draft_company(tender: dict, criteria: dict, company: dict, docs: list[dict]) -> dict | None:
+    r = _invoke(CompanyDraft, _proposal_prompt(COMPANY_TASK, tender, criteria, company, docs))
+    return r.model_dump() if r else None
+
+
+def draft_item(item: dict, tender: dict, criteria: dict, company: dict, docs: list[dict]) -> dict | None:
+    task = ITEM_TASK.format(item=item["item"], score=f" (배점 {item['score']:g}점)" if item.get("score") is not None else "",
+                            sub_items=", ".join(item.get("sub_items") or []) or "없음")
+    r = _invoke(ItemDraft, _proposal_prompt(task, tender, criteria, company, docs))
+    return r.model_dump() if r else None
+
+
+def draft_plan(tender: dict, criteria: dict, company: dict, docs: list[dict]) -> dict | None:
+    staff = ", ".join(f"{k} {v}명" for k, v in (company.get("보유인력") or {}).items()) or "(정보 없음)"
+    r = _invoke(PlanDraft, _proposal_prompt(PLAN_TASK.format(staff=staff), tender, criteria, company, docs))
+    return r.model_dump() if r else None
+
+
+# ---------- 제안서 대화형 보완 ----------
+class SlotEdit(BaseModel):
+    key: str = Field(description="바꿀 칸의 key (입력 목록 그대로)")
+    text: str = Field(description="칸에 넣을 새 내용. 인원 칸(…/count)은 숫자만")
+    source: Literal["user", "company_doc", "tender", "general"] = Field(
+        description="user: 사용자가 대화에서 직접 알려준 사실 / company_doc: 업체 문서 근거 / tender: 공고서 근거 / general: 근거 없는 일반론")
+    cites: list[Cite] = Field([], description="company_doc·tender일 때 원문 인용 (청크 본문 그대로, 짧게)")
+
+
+class ChatEditResult(BaseModel):
+    reply: str = Field(description="사용자에게 보낼 답변 1-3문장 (무엇을 바꾸자고 제안하는지, 못 채운 칸은 왜인지)")
+    edits: list[SlotEdit] = Field([], description="바꿀 칸 목록. 바꿀 것이 없으면 비움")
+
+
+CHAT_PROMPT = """당신은 공공 입찰 제안서 초안을 사용자와 함께 보완하는 컨설턴트입니다.
+사용자의 요청을 읽고 제안서의 어떤 칸을 어떻게 바꿀지 제안하세요. 실제 반영은 사용자가 확인한 뒤에 합니다.
+- [칸 목록]에 있는 key만 바꿀 수 있습니다. 요청과 관계없는 칸은 건드리지 마세요.
+- 사용자가 대화에서 직접 알려준 사실이면 source=user. 업체 문서에서 찾았으면 source=company_doc, 공고서에서 찾았으면 source=tender로 하고 cites를 붙이세요. {quote_rule}
+- 사실(인증·면허, 사람 이름, 경력, 실적 수치, 기간)은 사용자 말·업체 문서·업체 프로필·공고서에 있는 것만 쓰세요. 없으면 지어내지 말고 reply에 사용자에게 알려 달라고 요청하세요.
+- 사실형 칸(인증·면허, PM, 업체 근거)은 근거가 없으면 바꾸지 마세요.
+- 서술형 칸(전략·수행 방안 등)은 근거가 없어도 일반론으로 쓸 수 있고 그때는 source=general입니다.
+- 공고서 제안서 문체(~함, ~임)로 간결하게 쓰세요.
+
+[공고] {name} / 수요기관: {agency}
+[업체 프로필]
+{company}
+[업체 문서]
+{docs}
+[공고서]
+{tender_chunks}
+[칸 목록] key | 칸 이름 | 현재 내용
+{slots}
+[이전 대화]
+{history}
+[사용자 요청]
+{message}"""
+
+
+def chat_edit(message: str, history: list[dict], slots: list[dict], tender: dict, company: dict,
+              docs: list[dict], tender_chunks: list[dict]) -> dict | None:
+    profile = {k: v for k, v in company.items() if k not in ("비밀번호", "유사어")}
+    slot_lines = "\n".join(f"{s['key']} | {s['label']} | {s['current'] or '[확인 필요]'}" for s in slots)
+    hist = "\n".join(f"{'사용자' if h['role'] == 'user' else 'AI'}: {h['text']}" for h in history[-6:]) or "(없음)"
+    prompt = CHAT_PROMPT.format(
+        quote_rule=QUOTE_RULE, name=tender.get("bidNtceNm"), agency=tender.get("dminsttNm") or "-",
+        company=json.dumps(profile, ensure_ascii=False), docs=_chunks_text(docs) if docs else "(없음)",
+        tender_chunks=_chunks_text(tender_chunks) if tender_chunks else "(없음)", slots=slot_lines, history=hist, message=message)
+    r = _invoke(ChatEditResult, prompt)
+    return r.model_dump() if r else None

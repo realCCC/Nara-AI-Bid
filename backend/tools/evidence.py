@@ -8,6 +8,11 @@ def _norm(s: str) -> str:
     return re.sub(r"\s+", "", s or "")
 
 
+def _norm_file(s: str | None) -> str:
+    """파일명 비교용: 공백·괄호를 떼고 소문자로. LLM이 '붙임1)공고서.pdf'를 '(붙임1)공고서.pdf'로 적는 일이 있다."""
+    return re.sub(r"[\s()\[\]{}【】「」『』<>]", "", s or "").lower()
+
+
 def check_reason(reason: dict, tender: dict, company: dict, chunks: list[dict]) -> bool:
     if reason.get("source_type") == "pdf":
         # 줄임표(... …)로 줄인 인용은 조각마다 같은 청크에 있어야 통과
@@ -16,7 +21,8 @@ def check_reason(reason: dict, tender: dict, company: dict, chunks: list[dict]) 
         if sum(map(len, parts)) < 4:
             return False
         page = reason.get("page")  # 페이지를 넘어가는 청크는 걸친 페이지 어디를 적어도 통과
-        return any(c["file"] == reason.get("file") and (c["page"] == page or page in c.get("pages", ()))
+        file = _norm_file(reason.get("file"))
+        return any(_norm_file(c["file"]) == file and (c["page"] == page or page in c.get("pages", ()))
                    and all(p in _norm(c["text"]) for p in parts) for c in chunks)
     if reason.get("source_type") == "field":
         scope, _, name = (reason.get("field") or "").partition(".")

@@ -134,6 +134,8 @@ def test_conflicts_only_qualification_fields():
     assert _conflicts({"company_field": "company.소재지", "company_value": "강원"}, company)
     assert _conflicts({"company_field": "중소기업여부", "company_value": "False"}, company)
     assert _conflicts({"company_field": "company.업종", "company_value": "연구조사서비스"}, company)
+    assert _conflicts({"company_field": "업종", "company_value": '{"대분류":["연구조사서비스"]}'}, company)  # 공백 없는 JSON
+    assert not _conflicts({"company_field": "업종", "company_value": '{"대분류":["ICT 서비스"]}'}, company)
     assert not _conflicts({"company_field": "company.선호계약방식", "company_value": "제한경쟁"}, company)  # 선호는 자격 충돌 아님
     assert not _conflicts({"company_field": "company.소재지", "company_value": "부산"}, company)
     assert not _conflicts({"company_field": "중소기업여부", "company_value": "True"}, {"중소기업여부": True})  # '소기업 확인 불가' 오탐

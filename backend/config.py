@@ -16,6 +16,8 @@ def _path(key: str, default: str) -> Path:
 
 TENDERS_FILE = _path("TENDERS_FILE", "data/raw/tenders_202605.json")
 COMPANIES_DIR = _path("COMPANIES_DIR", "data/companies")
+# 업체 문서(회사소개서 등 txt/md/pdf): <COMPANY_DOCS_DIR>/<업체ID>/ — 제안서 초안을 LLM이 채울 때 근거로 검색
+COMPANY_DOCS_DIR = _path("COMPANY_DOCS_DIR", "data/companies/docs")
 REGION_LIMITS_FILE = _path("REGION_LIMITS_FILE", "data/region_limits.csv")
 PDF_DIR = _path("PDF_DIR", "data/pdfs")
 CHROMA_DIR = _path("CHROMA_DIR", "data/chroma")
@@ -55,6 +57,11 @@ def embedding_enabled() -> bool:
 
 def llm_enabled() -> bool:
     return all(os.getenv(k) for k in AZURE_KEYS)
+
+
+def chat_model_name() -> str:
+    """화면 표시용 채팅 모델(배포) 이름."""
+    return os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT") or "-"
 
 
 @lru_cache

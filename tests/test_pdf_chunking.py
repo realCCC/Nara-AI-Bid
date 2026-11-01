@@ -62,3 +62,12 @@ def test_heading_detection():
     assert pdf._is_heading("2. 입찰참가자격") and pdf._is_heading("Ⅲ. 제안서 평가")
     assert not pdf._is_heading("1. 금품·향응 등을 요구하거나 수수하지 않겠습니다.")
     assert not pdf._is_heading("가. 전자입찰접수개시일시")
+
+
+def test_file_name_brackets_tolerated():
+    """LLM이 파일명 괄호를 틀리게 적어도('붙임1)공고서.pdf' → '(붙임1)공고서.pdf') 인용·페이지가 맞으면 통과."""
+    chunks = chunk_pages("붙임1)공고서.pdf", PAGES)
+    ev = {"source_type": "pdf", "page": 1, "quote": "본점 소재지가 강원특별자치도"}
+    assert check_reason({**ev, "file": "(붙임1)공고서.pdf"}, {}, {}, chunks)
+    assert check_reason({**ev, "file": "붙임1) 공고서.PDF"}, {}, {}, chunks)
+    assert not check_reason({**ev, "file": "붙임2)공고서.pdf"}, {}, {}, chunks)

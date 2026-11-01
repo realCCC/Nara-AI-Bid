@@ -48,11 +48,12 @@ def qualification_chunks(head: list[dict], by_no: dict[str, dict]) -> dict[str, 
 def _conflicts(issue: dict, company: dict) -> bool:
     """충돌한다고 적은 업체 프로필 값이 실제 프로필에 있어야 한다 ('확인 불가'류 issue를 거른다)."""
     name = (issue.get("company_field") or "").strip().removeprefix("company.")  # LLM이 접두어를 빼먹기도 한다
-    value = str(issue.get("company_value") or "").strip().lower()
+    value = re.sub(r"\s+", "", str(issue.get("company_value") or "")).lower()
     if name == "중소기업여부" and company.get(name) is not False:  # 중소기업이면 규모 제한과 충돌할 일이 없다 (소기업 여부는 모름)
         return False
+    # 공백은 무시: LLM은 업종 값을 공백 없는 JSON({"대분류":[...]})으로 적는데 json.dumps는 ': '·', '를 넣는다
     return (name in CONFLICT_FIELDS and name in company and value != ""
-            and value in json.dumps(company[name], ensure_ascii=False).lower())
+            and value in re.sub(r"\s+", "", json.dumps(company[name], ensure_ascii=False)).lower())
 
 
 @traced("confirm_issues", big=("by_no", "chunks"),
