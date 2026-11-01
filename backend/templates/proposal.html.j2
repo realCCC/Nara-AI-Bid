@@ -1,47 +1,154 @@
 {%- macro confirm() -%}<span class="confirm">[확인 필요]</span>{%- endmacro -%}
+{#- f: {"text", "grounded", "sources"} — grounded면 출처, 아니면 AI 초안 표시. 없으면 [확인 필요] -#}
+{#- key: 대화형 보완에서 칸을 가리키는 이름 (data-slot, 바뀐 칸 강조용) -#}
+{%- macro fill(f, key) -%}
+<span data-slot="{{ key }}">
+{%- if f -%}{{ f.text }} {% if f.grounded %}<span class="src">({{ f.sources | join(", ") }})</span>{% else %}<span class="ai-draft">[AI 초안·검토 필요]</span>{% endif %}
+{%- else -%}{{ confirm() }}{%- endif -%}
+</span>
+{%- endmacro -%}
+{%- macro plain(v, key, suffix="") -%}<span data-slot="{{ key }}">{% if v %}{{ v }}{{ suffix }}{% else %}{{ confirm() }}{% endif %}</span>{%- endmacro -%}
+{%- macro ai_mark() -%}<span class="ai-draft">[AI 초안·검토 필요]</span>{%- endmacro -%}
 <h3 style="margin:0 0 4px;">{{ tender.bidNtceNm }} - 제안서 초안</h3>
 <p class="muted" style="margin:0 0 10px;">작성 업체: {{ company.회사명 }} · 공고번호 {{ tender.bidNtceNo }}</p>
 
-<h4>Ⅰ. 회사 소개</h4>
+<h4>Ⅰ. 사업 개요</h4>
+<table>
+  <tbody>
+  {%- for k, v in overview %}
+    <tr><th style="width:30%;">{{ k }}</th><td>{{ v }}</td></tr>
+  {%- endfor %}
+  {%- if not criteria.period %}
+    <tr><th style="width:30%;">과업 기간</th><td>{{ plain(None, "period") }}</td></tr>
+  {%- endif %}
+  </tbody>
+</table>
+
+<h4>Ⅱ. 사업 이해</h4>
+<p>과업 범위 (공고서 기준):</p>
+<ul>
+{%- for t in criteria.tasks %}
+  <li>{{ t.text }} <span class="src">({{ t.source }})</span></li>
+{%- else %}
+  <li>{{ confirm() }} 공고서 과업 지시서의 과업 내용을 옮겨 적으세요</li>
+{%- endfor %}
+</ul>
+{%- if reasons %}
+<p>우리 회사와 맞는 점 (추천 근거):</p>
+<ul>
+{%- for r in reasons %}
+  <li>{{ r.text }} <span class="src">({{ r.source }}{% if r.quote %} · "{{ r.quote }}"{% endif %})</span></li>
+{%- endfor %}
+</ul>
+{%- endif %}
+<p>사업 목적 이해·추진 전략: {{ fill(ai.understanding, "understanding") }}</p>
+
+<h4>Ⅲ. 회사 소개</h4>
 <p>회사명: {{ company.회사명 }} · 소재지: {{ company.소재지 }} · 중소기업 여부: {{ "중소기업" if company.중소기업여부 else "해당 없음" }}</p>
+{%- if company.업종 and company.업종.대분류 %}
+<p>업종: {{ company.업종.대분류 | join(", ") }}</p>
+{%- endif %}
 <p>핵심 역량: {{ company.역량키워드 | join(", ") }}</p>
 <p>주요 실적:</p>
 <ul>
-{%- for h in company.과거실적 %}
-  <li>{{ h.프로젝트명 }} ({{ won(h.계약금액) }})</li>
+{%- for h in history %}
+  <li>{% if h.related %}<b>[유사 실적]</b> {% endif %}{{ h.프로젝트명 }} ({{ won(h.계약금액) }})</li>
 {%- else %}
   <li>{{ confirm() }}</li>
 {%- endfor %}
 </ul>
-<p>비전·차별화 포인트: {{ confirm() }}</p>
+<p>보유 인력: {% if staff %}총 {{ staff_total }}명 ({% for k, v in staff.items() %}{{ k }} {{ v }}명{% if not loop.last %} · {% endif %}{% endfor %}){% else %}{{ confirm() }}{% endif %}</p>
+<p>보유 인증·면허: {{ fill(ai.certifications, "certifications") }}</p>
+<p>비전·차별화 포인트: {{ fill(ai.vision, "vision") }}</p>
 
-<h4>Ⅱ. 수행 방안 (평가항목을 목차로 사용)</h4>
+<h4>Ⅳ. 수행 방안 (평가항목을 목차로 사용)</h4>
 {%- for m in mapping %}
-<h4>Ⅱ-{{ loop.index }}. {{ m.item }}{% if m.score is not none %} (배점 {{ m.score | round | int }}점){% endif %}</h4>
-<p>업체 근거: {% if m.evidence %}{{ m.evidence }}{% else %}{{ confirm() }}{% endif %}</p>
-<p>수행 방안: {{ confirm() }}</p>
+{%- set i = loop.index0 %}
+<h4>Ⅳ-{{ loop.index }}. {{ m.item }}{% if m.score is not none %} (배점 {{ m.score | round | int }}점){% endif %}</h4>
+<p class="src">출처: {{ m.source }}</p>
+{%- if m.sub_items %}
+<p>세부 평가항목 (항목마다 대응 내용을 작성):</p>
+<ul>
+{%- for s in m.sub_items %}
+  <li>{{ s }}: {{ fill(m.sub_drafts.get(s), "items/%d/sub/%d" % (i, loop.index0)) }}</li>
+{%- endfor %}
+</ul>
+{%- endif %}
+<p>업체 근거: {{ fill(m.evidence, "items/%d/evidence" % i) }}</p>
+<p>수행 방안: {{ fill(m.plan, "items/%d/plan" % i) }}</p>
 {%- endfor %}
 
-<h4>Ⅲ. 추진 일정</h4>
-<p>과업 기간: {% if criteria.period %}{{ criteria.period }}{% else %}{{ confirm() }}{% endif %}</p>
-<p>단계: 착수 → 준비·기획 → 수행 → 결과 보고 / 단계별 기간: {{ confirm() }}</p>
+<h4>Ⅴ. 추진 일정</h4>
+{%- if schedule %}
+<p>입찰 일정 (공고 기준):</p>
+<table>
+  <thead><tr><th>단계</th><th>일시</th></tr></thead>
+  <tbody>
+  {%- for label, dt in schedule %}
+    <tr><td>{{ label }}</td><td>{{ dt }}</td></tr>
+  {%- endfor %}
+  </tbody>
+</table>
+{%- endif %}
+<p>과업 기간: {{ plain(criteria.period, "period") }}</p>
+{%- if ai.phases %}
+<p>{{ ai_mark() }} 단계별 내용·기간은 LLM이 과업 범위로 나눈 안입니다.</p>
+{%- endif %}
+<table>
+  <thead><tr><th>수행 단계</th><th>주요 내용</th><th>기간</th></tr></thead>
+  <tbody>
+  {%- for step in ["착수", "준비·기획", "수행", "결과 보고"] %}
+  {%- set p = (ai.phases or {}).get(step) %}
+    <tr><td>{{ step }}</td><td>{{ plain(p and p.content, "phases/%s/content" % step) }}</td><td>{{ plain(p and p.period, "phases/%s/period" % step) }}</td></tr>
+  {%- endfor %}
+  </tbody>
+</table>
 
-<h4>Ⅳ. 조직 구성</h4>
-<p>{% for k, v in company.보유인력.items() %}{{ k }} {{ v }}명{% if not loop.last %} · {% endif %}{% else %}{{ confirm() }}{% endfor %}</p>
-<p>투입 인력 배치: {{ confirm() }}</p>
+<h4>Ⅵ. 조직 구성</h4>
+{%- if ai.staffing %}
+<p>{{ ai_mark() }} 투입 인원·담당 업무는 LLM이 보유 인력으로 짠 안입니다.</p>
+{%- endif %}
+<table>
+  <thead><tr><th>역할</th><th>보유 인원</th><th>투입 인원</th><th>담당 업무</th></tr></thead>
+  <tbody>
+  {%- for k, v in staff.items() %}
+  {%- set a = (ai.staffing or {}).get(k) %}
+    <tr><td>{{ k }}</td><td>{{ v }}명</td><td>{{ plain(a and a.count, "staffing/%s/count" % k, "명") }}</td><td>{{ plain(a and a.duty, "staffing/%s/duty" % k) }}</td></tr>
+  {%- else %}
+    <tr><td>{{ confirm() }}</td><td>{{ confirm() }}</td><td>{{ confirm() }}</td><td>{{ confirm() }}</td></tr>
+  {%- endfor %}
+  </tbody>
+</table>
+<p>총괄 책임자(PM): {{ fill(ai.pm, "pm") }}</p>
 
-<h4>Ⅴ. 평가기준 대응표</h4>
+<h4>Ⅶ. 평가기준 대응표</h4>
 <table>
   <thead><tr><th>평가항목</th><th>배점</th><th>출처</th><th>대응 섹션</th><th>업체 근거</th></tr></thead>
   <tbody>
   {%- for m in mapping %}
     <tr>
-      <td>{{ m.item }}</td>
+      <td>{{ m.item }}{% if m.sub_items %}<br><span class="src">{{ m.sub_items | join(", ") }}</span>{% endif %}</td>
       <td>{% if m.score is not none %}{{ m.score | round | int }}점{% else %}{{ confirm() }}{% endif %}</td>
       <td>{{ m.source }}</td>
-      <td>Ⅱ-{{ loop.index }}</td>
-      <td>{% if m.evidence %}{{ m.evidence }}{% else %}{{ confirm() }}{% endif %}</td>
+      <td>Ⅳ-{{ loop.index }}</td>
+      <td>{{ fill(m.evidence, "items/%d/evidence" % loop.index0) }}</td>
     </tr>
   {%- endfor %}
   </tbody>
 </table>
+
+{%- if checks %}
+<h4>Ⅷ. 제출 전 확인 사항</h4>
+<table>
+  <thead><tr><th>분류</th><th>확인 내용</th><th>출처</th></tr></thead>
+  <tbody>
+  {%- for c in checks %}
+    <tr>
+      <td>{{ c.category }}</td>
+      <td>{{ c.text }}</td>
+      <td>{% if c.evidence and c.evidence.source_type == "pdf" %}PDF · {{ c.evidence.file }} p.{{ c.evidence.page }}{% elif c.evidence and c.evidence.field %}필드 · {{ c.evidence.field }}{% else %}-{% endif %}</td>
+    </tr>
+  {%- endfor %}
+  </tbody>
+</table>
+{%- endif %}

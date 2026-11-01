@@ -28,6 +28,8 @@ class ProposalState(TypedDict, total=False):
     selected_tender_id: str | None
     criteria: dict
     proposal_html: str
+    proposal_ai: dict | None   # 섹션별 LLM 초안 (대화형 보완이 칸 단위로 고친 뒤 다시 렌더링)
+    proposal_checks: list[dict]
     routes: int
 
 

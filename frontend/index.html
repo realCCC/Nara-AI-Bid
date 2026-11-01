@@ -123,22 +123,57 @@
   .sec-card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 22px 24px; margin-bottom: 20px; }
   .sec-card h3 { margin: 0 0 6px; font-size: 16px; display: flex; align-items: center; gap: 6px; }
   .confirm { background: var(--warn-soft); color: var(--warn-text); padding: 1px 6px; border-radius: 4px; font-weight: 600; }
+  .ai-draft { background: var(--ai-soft); color: var(--ai-text); padding: 1px 6px; border-radius: 4px; font-weight: 600; font-size: 12px; }
   .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--ai-line); border-top-color: var(--ai); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -2px; margin-right: 6px; }
   @keyframes spin { to { transform: rotate(360deg); } }
 
-  /* 추천 단계 5개: AI 단계는 파란 바탕, 룰 단계는 흰 바탕 */
-  .funnel { list-style: none; margin: 22px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 10px; }
-  .stage { flex: 1 1 170px; padding: 14px; border-radius: 12px; background: var(--card); border: 1px solid var(--line); }
-  .stage .step-no { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--sub); }
-  .stage .step-name { margin-top: 6px; font-weight: 600; }
-  .stage .num { margin-top: 4px; font-family: var(--mono); font-size: 26px; font-weight: 600; line-height: 1.2; }
+  /* 추천 단계 5개: 세로 타임라인. 단계마다 상태·숫자·소요 시간 + 그 단계에서 스트리밍된 중간 결과 */
+  .funnel { list-style: none; margin: 16px 0 0; padding: 0; display: flex; flex-direction: column; }
+  .stage { position: relative; padding: 0 0 14px 44px; }
+  .stage:last-child { padding-bottom: 0; }
+  .stage::before { content: ""; position: absolute; left: 15px; top: 34px; bottom: 2px; width: 2px; background: var(--line); }
+  .stage:last-child::before { display: none; }
+  .stage.done::before { background: var(--ai-line); }
+  .stage .dot { position: absolute; left: 0; top: 0; width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center;
+    background: var(--card); border: 2px solid var(--line-strong); color: var(--faint); font-family: var(--mono); font-size: 13px; font-weight: 600; }
+  .stage.active .dot { border-color: var(--ai); color: var(--ai); box-shadow: 0 0 0 4px var(--ai-bg); animation: pulse 1.6s ease-in-out infinite; }
+  .stage.done .dot { background: var(--ai); border-color: var(--ai); color: #fff; font-size: 0; }
+  .stage.done .dot::after { content: "✓"; font-size: 15px; }
+  .stage.skip .dot { border-style: dashed; }
+  @keyframes pulse { 50% { box-shadow: 0 0 0 7px var(--ai-bg); } }
+  .stage-box { padding: 10px 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--card); }
+  .stage.active .stage-box { border-color: var(--ai); }
+  .stage.ai.done .stage-box { background: var(--ai-bg); border-color: var(--ai-line); }
+  .stage.rule.done .stage-box, .stage.skip .stage-box { background: var(--soft); }
+  .stage-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-height: 30px; }
+  .stage .step-name { font-weight: 600; }
+  .stage .state { font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--soft); color: var(--faint); border: 1px solid var(--line); }
+  .stage .state::before { content: "대기"; }
+  .stage.active .state { background: var(--ai-soft); color: var(--ai); border-color: var(--ai-line); }
+  .stage.active .state::before { content: "진행 중"; }
+  .stage.done .state { background: var(--card); color: var(--ai-text); border-color: var(--ai-line); }
+  .stage.done .state::before { content: "완료"; }
+  .stage.skip .state::before { content: "생략"; }
+  .stage .sum { margin-left: auto; display: flex; align-items: baseline; gap: 6px; }
+  .stage .num { font-family: var(--mono); font-size: 18px; font-weight: 600; }
   .stage .lbl { font-size: 12px; color: var(--sub); }
-  .stage.active { border-color: var(--ai); box-shadow: 0 0 0 3px var(--ai-bg); animation: pulse 1.6s ease-in-out infinite; }
   .stage.active .lbl { color: var(--ai); }
-  @keyframes pulse { 50% { box-shadow: 0 0 0 6px var(--ai-bg); } }
-  .stage.done .step-no::after { content: "✓"; margin-left: auto; color: var(--ai); font-weight: 700; }
-  .stage.ai.done { background: var(--ai-bg); border-color: var(--ai-line); }
-  .stage.rule.done { background: var(--soft); }
+  .stage .t { font-family: var(--mono); font-size: 12px; color: var(--faint); min-width: 56px; text-align: right; }
+  .stage .hint { margin: 6px 0 0; font-size: 13px; color: var(--ai); }
+  .stage .hint:empty { display: none; }
+  /* 단계 안 스트리밍: 그 단계의 노드가 끝날 때마다 서버가 보낸 중간 결과를 한 줄씩 쌓는다 */
+  .live { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+  .live:not(:empty) { margin-top: 8px; }
+  .live > li { padding: 8px 10px; border-radius: 8px; border-left: 3px solid var(--line-strong); background: var(--card); font-size: 13px; animation: fadein .3s ease-out; }
+  .live > li.ai { border-left-color: var(--ai); }
+  .live .lh { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+  .live .lh .t { margin-left: auto; color: var(--faint); font-family: var(--mono); font-size: 12px; }
+  .live details { margin-top: 6px; }
+  .live summary { cursor: pointer; color: var(--sub); font-size: 12px; }
+  .live ol { margin: 6px 0 0; padding-left: 22px; display: flex; flex-direction: column; gap: 2px; }
+  .live ol .mono { color: var(--faint); font-size: 12px; }
+  .live .q-text { margin-top: 6px; padding: 6px 10px; border-radius: 8px; background: var(--soft); color: #3D4451; }
+  @keyframes fadein { from { opacity: 0; transform: translateY(-4px); } }
   .bar { height: 4px; background: var(--line); border-radius: 4px; overflow: hidden; margin-top: 16px; }
   .bar > div { height: 100%; width: 0; background: var(--ai); transition: width .4s; }
 
@@ -235,6 +270,35 @@
   .prop-cols .draft { flex: 999 1 560px; min-width: 0; padding: 0; overflow: hidden; }
   .draft-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; padding: 16px 22px; border-bottom: 1px solid var(--line); }
   .draft-head h3 { margin: 0; }
+  /* 공고서 원문 좌우 분할: 평가항목은 위 한 줄, 초안 | 원문 */
+  .prop-cols.split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .prop-cols.split .crit { grid-column: 1 / -1; }
+  .viewer { padding: 0; overflow: hidden; position: sticky; top: 12px; }
+  .viewer iframe { display: block; width: 100%; height: calc(100vh - 110px); border: 0; background: #EEF0F3; }
+  .viewer select { min-height: 40px; max-width: 320px; border: 1px solid var(--line-strong); border-radius: 8px; padding: 0 8px; font: inherit; font-size: 13px; }
+  .src-link { color: var(--ai); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+  /* 제안서 보완 대화 */
+  .chat-box { padding: 14px 22px 16px; border-bottom: 1px solid var(--line); background: var(--ai-bg); }
+  .chat-box .chat-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; font-size: 14px; }
+  .chat-log { display: flex; flex-direction: column; gap: 8px; max-height: 360px; overflow-y: auto; margin: 10px 0; }
+  .chat-log:empty { display: none; }
+  .msg { max-width: 92%; padding: 8px 12px; border-radius: 10px; font-size: 13px; line-height: 1.6; white-space: pre-wrap; }
+  .msg.user { align-self: flex-end; background: var(--ai); color: #fff; }
+  .msg.ai { align-self: flex-start; background: var(--card); border: 1px solid var(--ai-line); }
+  .edits { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; white-space: normal; }
+  .edit { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); cursor: pointer; }
+  .edit input { margin-top: 4px; }
+  .edit .lbl { font-weight: 600; font-size: 12px; }
+  .edit .before { color: var(--sub); text-decoration: line-through; font-size: 12px; }
+  .edit .after { font-size: 13px; }
+  .edits .skip { font-size: 12px; color: var(--warn-text); }
+  .msg .steps { display: flex; flex-direction: column; gap: 3px; margin-bottom: 6px; font-size: 12px; color: var(--sub); white-space: normal; }
+  .msg .st.done::before { content: "✓ "; color: var(--ok, #15803D); font-weight: 700; }
+  .msg .st .det { color: var(--sub); opacity: .85; margin-left: 4px; }
+  .msg .reply { white-space: pre-wrap; }
+  .chat-input { display: flex; gap: 8px; align-items: flex-end; }
+  .chat-input textarea { flex: 1; padding: 10px 12px; border-radius: 10px; border: 1px solid #C9CED6; font: inherit; font-size: 14px; resize: vertical; outline: none; background: var(--card); }
+  .proposal [data-slot].flash { background: #FEF3C7; border-radius: 3px; transition: background 1.5s; }
   .paper-bg { background: #EEF0F3; padding: 28px 20px; }
   .proposal { max-width: 720px; margin: 0 auto; background: #fff; border: 1px solid #DADDE3; padding: 44px 48px; font-size: 14px; line-height: 1.75; }
   .proposal h3 { font-family: var(--serif); font-size: 22px; line-height: 1.4; }
@@ -356,25 +420,35 @@
           </div>
           <button class="btn primary" id="runBtn">추천 시작</button>
         </div>
-        <ol class="funnel" aria-label="추천 단계">
-          <li class="stage ai" id="st1" title="LLM이 업체정보를 읽고 맞춤 문항을 만들고, 자유 입력도 조건으로 해석합니다.">
-            <div class="step-no"><span class="kind ai">AI</span>1단계</div><div class="step-name">맞춤 인터뷰</div>
-            <div class="num">–</div><div class="lbl" id="st1Label">조건 반영</div></li>
-          <li class="stage rule" id="st2" title="PDF 보유·업종·참가 제한·지역·예산·인터뷰 조건으로 참여할 수 없는 공고를 거릅니다.">
-            <div class="step-no"><span class="kind rule">룰</span>2단계</div><div class="step-name">자격 필터</div>
-            <div class="num">–</div><div class="lbl" id="st2Label">건 통과</div></li>
-          <li class="stage ai" id="st3" title="BGE-M3 의미 검색 + BM25 + 룰 순위를 합친 뒤 리랭커로 다시 정렬해 상위 건을 고릅니다.">
-            <div class="step-no"><span class="kind ai">AI</span>3단계</div><div class="step-name">의미 검색·리랭크</div>
-            <div class="num">–</div><div class="lbl" id="st3Label">건 선별</div></li>
-          <li class="stage ai" id="st4" title="LLM이 공고서 PDF 근거를 읽고 순위를 매기며, 근거마다 원문 출처를 대조합니다.">
-            <div class="step-no"><span class="kind ai">AI</span>4단계</div><div class="step-name">공고서 근거 순위</div>
-            <div class="num">–</div><div class="lbl" id="st5Label">건</div></li>
-          <li class="stage ai" id="st5" title="검증 서브에이전트가 상위 후보의 적합도를 다시 평가하고 순위를 조정합니다.">
-            <div class="step-no"><span class="kind ai">AI</span>5단계</div><div class="step-name">추천 검증</div>
-            <div class="num">–</div><div class="lbl" id="st6Label">건 재평가</div></li>
-        </ol>
         <div class="bar"><div id="progressBar"></div></div>
         <p class="muted" id="progressText" style="margin:8px 0 0;">대기 중</p>
+        <ol class="funnel" aria-label="추천 단계" aria-live="polite">
+          <li class="stage ai" id="st1" title="LLM이 업체정보를 읽고 맞춤 문항을 만들고, 자유 입력도 조건으로 해석합니다.">
+            <span class="dot">1</span><div class="stage-box"><div class="stage-head">
+              <span class="kind ai">AI</span><span class="step-name">1단계 · 맞춤 인터뷰</span><span class="state"></span>
+              <span class="sum"><span class="num">–</span><span class="lbl" id="st1Label">조건 반영</span></span><span class="t"></span></div>
+              <p class="hint"></p><ol class="live"></ol></div></li>
+          <li class="stage rule" id="st2" title="PDF 보유·업종·참가 제한·지역·예산·인터뷰 조건으로 참여할 수 없는 공고를 거릅니다.">
+            <span class="dot">2</span><div class="stage-box"><div class="stage-head">
+              <span class="kind rule">룰</span><span class="step-name">2단계 · 자격 필터</span><span class="state"></span>
+              <span class="sum"><span class="num">–</span><span class="lbl" id="st2Label">건 통과</span></span><span class="t"></span></div>
+              <p class="hint"></p><ol class="live"></ol></div></li>
+          <li class="stage ai" id="st3" title="AI가 만든 검색 문장으로 임베딩 의미 검색(dense) + BM25 + 룰 순위를 RRF로 합친 뒤 리랭커로 다시 정렬해 상위 건을 고릅니다.">
+            <span class="dot">3</span><div class="stage-box"><div class="stage-head">
+              <span class="kind ai">AI</span><span class="step-name">3단계 · 의미 검색·리랭크</span><span class="state"></span>
+              <span class="sum"><span class="num">–</span><span class="lbl" id="st3Label">건 선별</span></span><span class="t"></span></div>
+              <p class="hint"></p><ol class="live"></ol></div></li>
+          <li class="stage ai" id="st4" title="LLM이 공고서 PDF 근거를 읽고 순위를 매기며, 근거마다 원문 출처를 대조합니다.">
+            <span class="dot">4</span><div class="stage-box"><div class="stage-head">
+              <span class="kind ai">AI</span><span class="step-name">4단계 · 공고서 근거 순위</span><span class="state"></span>
+              <span class="sum"><span class="num">–</span><span class="lbl" id="st5Label">건</span></span><span class="t"></span></div>
+              <p class="hint"></p><ol class="live"></ol></div></li>
+          <li class="stage ai" id="st5" title="검증 서브에이전트가 상위 후보의 적합도를 다시 평가하고 순위를 조정합니다.">
+            <span class="dot">5</span><div class="stage-box"><div class="stage-head">
+              <span class="kind ai">AI</span><span class="step-name">5단계 · 추천 검증</span><span class="state"></span>
+              <span class="sum"><span class="num">–</span><span class="lbl" id="st6Label">건 재평가</span></span><span class="t"></span></div>
+              <p class="hint"></p><ol class="live"></ol></div></li>
+        </ol>
         <div class="status-row hidden" id="statusRow"></div>
       </div>
 
@@ -421,7 +495,7 @@
     </section>
 
     <section id="step-proposal" class="step hidden">
-      <div class="prop-cols">
+      <div class="prop-cols" id="propCols">
         <div class="sec-card crit">
           <h3><span class="kind ai">AI</span>평가항목 추출</h3>
           <p class="muted" style="margin:0 0 12px;">공고서에서 평가항목·배점·과업 기간을 찾아 원문 위치와 함께 가져옵니다. <span id="criteriaSource"></span></p>
@@ -431,7 +505,7 @@
               <tbody id="criteriaBody"></tbody>
             </table>
           </div>
-          <p class="muted" style="margin:12px 0 0;"><span class="confirm">[확인 필요]</span> 는 공고서·업체 정보에서 찾지 못해 담당자가 채울 칸입니다.</p>
+          <p class="muted" style="margin:12px 0 0;"><span class="confirm">[확인 필요]</span> 는 공고서·업체 정보에서 찾지 못해 담당자가 채울 칸, <span class="ai-draft">[AI 초안·검토 필요]</span> 는 업체 문서 근거 없이 AI가 쓴 문장입니다. 근거가 있는 문장에는 업체 문서 출처가 붙습니다.</p>
         </div>
         <div class="sec-card draft">
           <div class="draft-head">
@@ -439,9 +513,31 @@
               <h3>제안서 초안 미리보기</h3>
               <p class="muted" style="margin:2px 0 0; font-size:12px;">고정 템플릿에 값을 채웠습니다. 사실이 없는 곳은 비워 둡니다.</p>
             </div>
-            <button class="btn primary" id="downloadBtn">HTML 다운로드</button>
+            <div class="row" style="gap:8px;">
+              <button class="btn" id="viewPdfBtn">공고서 원문보기</button>
+              <button class="btn primary" id="downloadBtn">HTML 다운로드</button>
+            </div>
+          </div>
+          <div class="chat-box">
+            <div class="chat-head"><span class="kind ai">AI</span><b>제안서 보완 대화</b>
+              <span class="muted" style="font-size:12px;">비어 있는 칸을 채워 달라고 하거나 담당자가 아는 사실을 알려 주세요. 변경안을 확인하고 골라서 적용합니다.</span></div>
+            <div class="chat-log" id="chatLog"></div>
+            <form class="chat-input" id="chatForm">
+              <textarea id="chatInput" rows="2" maxlength="500" placeholder="예) PM은 홍길동 부장이고 경력 12년이야 / 추진 일정 기간을 과업 기간에 맞춰 나눠 줘"></textarea>
+              <button class="btn primary" id="chatSend" type="submit">보내기</button>
+            </form>
           </div>
           <div class="paper-bg"><div class="proposal" id="proposalPreview"></div></div>
+        </div>
+        <div class="sec-card viewer hidden" id="pdfViewer">
+          <div class="draft-head">
+            <h3>공고서 원문</h3>
+            <div class="row" style="gap:8px;">
+              <select id="pdfSelect" aria-label="공고서 파일"></select>
+              <button class="btn" id="pdfClose">닫기</button>
+            </div>
+          </div>
+          <iframe id="pdfFrame" title="공고서 원문"></iframe>
         </div>
       </div>
     </section>
@@ -486,9 +582,15 @@ const show = step => {
 };
 const enableTab = (step, on = true) => document.querySelector(`#tabs button[data-step="${step}"]`).disabled = !on;
 
+let SYS = {};  // 서버 설정: LLM·임베딩·리랭커 모델 이름 (화면 설명에 그대로 쓴다)
 api("/api/status").then(s => {
-  $("modePill").textContent = "PoC · " + (s.llm ? "LLM 연결됨" : "룰 모드 (Azure 키 없음)") +
-    ` · 검색 ${s.embedding === "bge" ? "semantic" : "keyword_fallback"}`;
+  SYS = s;
+  $("modePill").textContent = "PoC · " + (s.llm ? `LLM ${s.chat_model}` : "룰 모드 (Azure 키 없음)") +
+    ` · ${s.embedding_enabled ? `임베딩 ${s.embedding_model}` : "키워드 검색 (임베딩 없음)"}`;
+  $("st3").title = s.embedding_enabled
+    ? `AI가 만든 검색 문장으로 ${s.embedding_model} 의미 검색(dense) + BM25 + 룰 순위${s.body_search ? " + 공고서 본문" : ""}를 RRF로 합친 뒤 ${s.rerank_model}로 다시 정렬해 상위 건을 고릅니다.`
+    : "임베딩이 꺼져 있어 BM25 + 룰 순위만으로 상위 건을 고릅니다.";
+  if (s.llm) ["st1", "st4", "st5"].forEach(id => { $(id).title += ` (${s.chat_model})`; });
 }).catch(() => {});
 
 /* ---------- 1. 로그인 / 로그아웃 ---------- */
@@ -521,6 +623,7 @@ function resetRecommend() {
   $("excludedCard").classList.add("hidden");
   $("interviewCard").classList.add("hidden");
   $("statusRow").classList.add("hidden");
+  document.querySelectorAll(".funnel .live, .funnel .hint, .funnel .t").forEach(el => { el.innerHTML = ""; });
   $("pSynonyms").classList.add("hidden");
   $("runBtn").textContent = "추천 시작";
   $("runBtn").disabled = false;
@@ -589,8 +692,9 @@ function fillSynonyms(sem) {
 function setStage(id, value, cls) {
   const el = $(id);
   el.querySelector(".num").innerHTML = cls === "active" && value === "…" ? '<span class="spinner"></span>' : esc(String(value));
-  el.classList.remove("done", "active");
+  el.classList.remove("done", "active", "skip");
   if (cls) el.classList.add(cls);
+  if (cls !== "active") el.querySelector(".hint").textContent = "";
 }
 const RAG_LABEL = { llm: "건", rule_only: "룰 순위 (LLM 미연결)", rule_fallback: "룰 순위로 대체", no_candidates: "후보 없음" };
 const MODE_BADGE = { llm: '<span class="tag llm">AI 순위·근거</span>', rule_only: '<span class="tag gray">룰 순위만 (LLM 미연결)</span>',
@@ -603,10 +707,30 @@ async function startRecommend() {
   state = { threadId: r.thread_id, recs: [], selected: null, done: false, running: false, result: null };
   return r;
 }
-// 인터뷰 답변 → 추천 결과(HITL ①에서 멈춤)
-async function answerInterview(answers) {
-  const r = await api("/api/interview", { method: "POST",
+// 인터뷰 답변 → 추천 결과(HITL ①에서 멈춤). SSE로 받아 단계가 끝날 때마다 onStep(중간 결과)을 부른다
+async function answerInterview(answers, onStep = () => {}) {
+  const res = await fetch("/api/interview/stream", { method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ token: session.token, thread_id: state.threadId, answers }) });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    throw new Error(d.detail || `요청 실패 (${res.status})`);
+  }
+  const reader = res.body.getReader(), dec = new TextDecoder();
+  let buf = "", r = null;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    for (let i; (i = buf.indexOf("\n\n")) >= 0;) {
+      const raw = buf.slice(0, i);
+      buf = buf.slice(i + 2);
+      const ev = (raw.match(/^event: (.*)$/m) || [])[1], data = JSON.parse((raw.match(/^data: (.*)$/m) || [])[1] || "null");
+      if (ev === "step") onStep(data);
+      else if (ev === "result") r = data;
+      else if (ev === "error") throw new Error(data.detail);
+    }
+  }
+  if (!r) throw new Error("추천 결과를 받지 못했습니다.");
   state.recs = r.recommendations;
   state.result = r;
   return r;
@@ -657,6 +781,7 @@ $("runBtn").onclick = async () => {
     setStage("st1", r.questions.length, "active");
     $("st1Label").textContent = ai ? "개 AI 맞춤 문항" : "개 기본 문항";
     $("progressText").textContent = "추천 조건을 고른 뒤 [이 조건으로 추천]을 누르세요.";
+    $("st1").querySelector(".hint").textContent = "아래 문항에서 추천 조건을 고르세요.";
   } catch (e) {
     $("progressText").textContent = "오류: " + e.message;
     $("runBtn").disabled = false;
@@ -665,20 +790,26 @@ $("runBtn").onclick = async () => {
   }
 };
 
-// 추천 실행 중 1초마다 서버의 진행 상황(끝난 그래프 노드)을 읽어 단계 카드를 하나씩 채운다
-const PROGRESS_STEPS = [  // [이 노드가 끝나면, 진행률, 다음 안내]
-  [null, 10, "자격 필터: 업종·지역·예산·인터뷰 조건으로 참여할 수 없는 공고를 거르는 중"],
-  ["filter_and_score", 25, "의미 검색: BGE-M3·BM25·룰 순위로 후보를 찾는 중"],
-  ["search", 40, "리랭크: 리랭커가 상위 후보를 다시 정렬하는 중"],
-  ["rerank", 55, "공고서 근거 순위: 상위 공고 PDF를 읽고 LLM이 근거와 함께 순위를 매기는 중"],
-  ["rag_recommend", 85, "추천 검증: 검증 에이전트가 상위 후보의 참가 자격을 다시 확인하는 중"],
-  ["verify_recommendations", 98, "결과 정리 중"],
+// 추천 실행 중 서버가 스트리밍한 단계 완료 이벤트로 단계 카드를 하나씩 채운다
+const PROGRESS_STEPS = [  // [이 노드가 끝나면, 진행률, 진행 중인 단계, 다음 안내]
+  [null, 10, "st2", "업종·지역·예산·인터뷰 조건으로 참여할 수 없는 공고를 거르는 중"],
+  ["filter_and_score", 25, "st3", "AI가 검색 문장을 만들고 임베딩(dense)·BM25·룰 순위를 합쳐 후보를 찾는 중"],
+  ["search", 40, "st3", "리랭커가 상위 후보를 다시 정렬하는 중"],
+  ["rerank", 55, "st4", "상위 공고 PDF를 읽고 LLM이 근거와 함께 순위를 매기는 중"],
+  ["rag_recommend", 85, "st5", "검증 에이전트가 상위 후보의 참가 자격을 다시 확인하는 중"],
+  ["verify_recommendations", 98, null, "결과 정리 중"],
 ];
+const STAGE_OF = { interview: "st1", filter_and_score: "st2", search: "st3", rerank: "st3", rag_recommend: "st4",
+                   verify_recommendations: "st5" };  // 스트림 노드 → 단계 (search·rerank는 3단계 안에 둘 다)
+const STAGE_END = ["interview", "filter_and_score", "rerank", "rag_recommend", "verify_recommendations"];  // 단계를 끝내는 노드
 function showProgress(p, sec) {
   const done = new Set(p.done), info = p.info || {};
   const step = PROGRESS_STEPS.filter(([n]) => !n || done.has(n)).pop();
   $("progressBar").style.width = step[1] + "%";
-  $("progressText").innerHTML = `<span class="spinner"></span>${esc(step[2])} <span class="mono">(${sec}초)</span>`;
+  const cur = step[2] ? `${$(step[2]).querySelector(".step-name").textContent} · ` : "";
+  $("progressText").innerHTML = `<span class="spinner"></span>${esc(cur + step[3])} <span class="mono">(${sec}초)</span>`;
+  document.querySelectorAll(".funnel .hint").forEach(h => { h.textContent = ""; });
+  if (step[2]) $(step[2]).querySelector(".t").textContent = `${sec - (p.since || 0)}초 경과`;  // 진행 중 단계는 경과 시간
   if (done.has("filter_and_score")) {
     setStage("st2", info.hard_pass, "done");
     $("st2Label").textContent = `건 통과 (${info.total}건 중)`;
@@ -691,7 +822,7 @@ function showProgress(p, sec) {
     $("st3Label").textContent = done.has("search") ? "리랭크 중" : "의미 검색 중";
   }
   if (done.has("rag_recommend")) {
-    setStage("st4", info.recs, info.rag_status === "llm" ? "done" : "");
+    setStage("st4", info.recs, info.rag_status === "llm" ? "done" : "skip");
     $("st5Label").textContent = RAG_LABEL[info.rag_status] || "건";
   } else if (done.has("rerank")) {
     setStage("st4", "…", "active");
@@ -701,21 +832,58 @@ function showProgress(p, sec) {
     setStage("st5", "…", "active");
     $("st6Label").textContent = "자격 재확인 중";
   }
+  if (step[2]) $(step[2]).querySelector(".hint").innerHTML = `<span class="spinner"></span>${esc(step[3])}`;  // setStage가 지운 안내 복원
 }
-function pollProgress(threadId) {
-  const t0 = Date.now();
-  let busy = false;
-  const tick = async () => {
-    if (busy) return;
-    busy = true;
-    try {
-      const p = await api(withToken(`/api/progress?thread_id=${encodeURIComponent(threadId)}`));
-      if (state.running && state.threadId === threadId) showProgress(p, Math.round((Date.now() - t0) / 1000));
-    } catch (e) { /* 진행 표시는 실패해도 추천은 계속 */ }
-    busy = false;
+// 스트림 이벤트 → 진행 상태(끝난 노드·단계별 숫자) + 단계별 결과 한 줄. 경과 초는 1초마다 다시 그린다
+function trackStream() {
+  const t0 = Date.now(), p = { done: [], info: {}, since: 0 };
+  const sec = () => Math.round((Date.now() - t0) / 1000);
+  const id = setInterval(() => { if (state.running) showProgress(p, sec()); }, 1000);
+  const onStep = ev => {
+    p.done.push(ev.node);
+    const s = sec();
+    if (STAGE_END.includes(ev.node)) {  // 단계 소요 시간 확정 (인터뷰는 답변 해석 시간만이라 표시하지 않음)
+      if (ev.node !== "interview") $(STAGE_OF[ev.node]).querySelector(".t").textContent = `${s - p.since}초 소요`;
+      p.since = s;
+    }
+    const info = p.info;
+    if (ev.node === "filter_and_score") Object.assign(info, { total: ev.total, hard_pass: ev.hard_pass });
+    else if (ev.node === "rerank") Object.assign(info, { top: ev.top.length, rerank: ev.rerank });
+    else if (ev.node === "rag_recommend") Object.assign(info, { rag_status: ev.rag_status, recs: ev.top.length });
+    showProgress(p, sec());
+    renderLive(ev, sec());
   };
-  const id = setInterval(tick, 1000);
-  return () => clearInterval(id);
+  return { onStep, stop: () => clearInterval(id) };
+}
+const LIST_NAMES = { rule: "룰 순위", bm25: "BM25", dense: "의미(dense)", body: "공고서 본문" };
+const QUERY_SOURCE = { llm: "AI 작성", interview: "인터뷰 주력 분야", template: "템플릿" };
+const briefList = (items, extra) => `<ol>${items.map(t => `<li>${esc(t.bidNtceNm)} ${extra(t)}</li>`).join("")}</ol>`;
+function renderLive(ev, sec) {
+  const L = {
+    interview: () => ["ai", `<b>맞춤 인터뷰</b> ${ev.conditions ? `조건 ${ev.conditions}개 반영` : "기본 조건으로 진행"}`, ""],
+    filter_and_score: () => ["", `<b>자격 필터</b> 공고 ${ev.total}건 중 <b>${ev.hard_pass}건</b> 통과`,
+      `${ev.keywords.length ? `<div class="muted" style="margin-top:4px;">의미 매칭 키워드 · ${esc(ev.keywords.join(", "))}</div>` : ""}
+       <details><summary>룰 점수 상위 ${ev.top.length}건</summary>${briefList(ev.top, t => `<span class="mono">${esc(t.soft_score)}점</span>`)}</details>`],
+    search: () => ["ai", `<b>의미 검색</b> ${(ev.lists || []).map(x => esc(LIST_NAMES[x] || x)).join(" + ")} → RRF
+      ${ev.path === "semantic" ? "" : '<span class="tag gray">키워드 검색만</span>'}`,
+      `<div class="q-text">검색 문장 (${esc(QUERY_SOURCE[ev.query_source] || "-")}) · ${esc(ev.query)}</div>
+       <details><summary>RRF 상위 ${ev.top.length}건</summary>${briefList(ev.top, t => `<span class="mono">${fmt(t.rrf, 4)}</span>`)}</details>`],
+    rerank: () => ["ai", `<b>리랭크</b> 상위 ${ev.top.length}건 선별 ${ev.rerank === "applied" ? "· 리랭커 적용" : '<span class="tag gray">리랭크 생략</span>'}`,
+      `<details><summary>후보 ${ev.top.length}건 (공고서 근거 순위 전)</summary>${briefList(ev.top, () => "")}</details>`],
+    rag_recommend: () => ["ai", `<b>공고서 근거 순위</b> ${ev.rag_status === "llm" ? "AI가 공고서 PDF 근거로 순위를 다시 매김" : esc(RAG_LABEL[ev.rag_status] || ev.rag_status)}`,
+      `<details><summary>순위 ${ev.top.length}건</summary>${briefList(ev.top, () => "")}</details>`],
+    verify_recommendations: () => {
+      const v = ev.verification;
+      return ["ai", `<b>추천 검증</b> ${v.status === "passed" ? `상위 ${v.checked}건 재평가 · ${v.changed ? "순위 조정" : "순위 유지"}${v.flagged ? ` · 자격 의심 ${v.flagged}건` : ""}` : `생략 (${esc(v.reason || "-")})`}`, ""];
+    },
+  }[ev.node];
+  if (!L) return;
+  const [cls, head, body] = L();
+  const log = $(STAGE_OF[ev.node]).querySelector(".live");
+  document.querySelectorAll(".funnel details[open]").forEach(d => d.open = false);  // 최신 결과만 펼침
+  log.insertAdjacentHTML("beforeend", `<li class="${cls}"><div class="lh">${head}<span class="t" title="추천 시작부터 누적 시간">누적 ${sec}초</span></div>${body}</li>`);
+  const last = log.lastElementChild.querySelector("details");
+  if (last) last.open = true;
 }
 
 async function submitInterview(answers) {
@@ -728,19 +896,19 @@ async function submitInterview(answers) {
   $("st1Label").textContent = nCond ? "개 조건 반영" : "건너뜀 (기본 조건)";
   setStage("st2", "…", "active");
   showProgress({ done: [], info: {} }, 0);
-  const stopPoll = pollProgress(state.threadId);
+  const live = trackStream();
   try {
-    const r = await answerInterview(answers);
-    stopPoll();
+    const r = await answerInterview(answers, live.onStep);
+    live.stop();
     const f = r.funnel, isLlm = r.rag_status === "llm", s = r.search || {}, v = r.verification;
     setStage("st2", f.hard_pass, "done");
     $("st2Label").textContent = `건 통과 (${f.total}건 중)`;
-    setStage("st3", f.top, s.path === "semantic" ? "done" : "");
+    setStage("st3", f.top, "done");
     $("st3Label").textContent = s.path === "semantic" ? `건 선별${s.rerank === "applied" ? " · 리랭크" : ""}` : "건 (키워드 검색만)";
-    setStage("st4", isLlm ? r.recommendations.length : "–", isLlm ? "done" : "");
+    setStage("st4", isLlm ? r.recommendations.length : "–", isLlm ? "done" : "skip");
     $("st5Label").textContent = RAG_LABEL[r.rag_status] || "건";
     const verified = v && v.status === "passed";
-    setStage("st5", verified ? v.checked : "–", verified ? "done" : "");
+    setStage("st5", verified ? v.checked : "–", verified ? "done" : "skip");
     $("st6Label").textContent = verified ? `건 재평가 · ${v.changed ? "순위 조정" : "순위 유지"}${v.flagged ? ` · 자격 의심 ${v.flagged}건` : ""}` : "생략";
     $("progressBar").style.width = "100%";
     $("progressText").textContent = isLlm ? "출처 대조 완료" : "룰 추천 완료 — Azure 키를 입력하면 공고서 근거 순위·검증이 추가됩니다";
@@ -755,7 +923,7 @@ async function submitInterview(answers) {
     $("runBtn").textContent = "다시 추천";
     renderResults();
   } catch (e) {
-    stopPoll();
+    live.stop();
     $("progressText").textContent = "오류: " + e.message;
     $("progressBar").style.width = "0%";
   } finally {
@@ -785,7 +953,8 @@ function renderStatus(r) {
       <span class="tag ${s.rerank === "applied" ? "ok" : "gray"}">리랭크 ${s.rerank === "applied" ? "적용" : "생략"}</span> ${chunkTag} ${vTag}`),
     row("검색 문장", `${esc(s.query || "-")} <span class="muted">(${({ llm: "AI 작성", interview: "인터뷰 주력 분야", template: "템플릿" })[s.query_source] || "-"})</span>
       ${s.path !== "semantic" && s.reason ? `<div class="muted">${esc(s.reason)}</div>` : ""}${s.rerank !== "applied" && s.rerank_reason ? `<div class="muted">리랭크 생략: ${esc(s.rerank_reason)}</div>` : ""}`),
-    row("의미 매칭", sem.used ? `<span class="tag ok">BGE-M3</span> ${esc((sem.keywords || []).join(", "))}` : `<span class="tag gray">문자열 일치만</span> ${esc(sem.reason || "")}`),
+    row("검색 결합", `${(s.lists || []).map(x => `<span class="pill">${esc(LIST_NAMES[x] || x)}</span>`).join("")} <span class="muted">→ RRF${s.rerank === "applied" && SYS.rerank_model ? ` → ${esc(SYS.rerank_model)}` : ""}</span>`),
+    row("의미 매칭", sem.used ? `<span class="tag ok">${esc(SYS.embedding_model || "임베딩")}</span> ${esc((sem.keywords || []).join(", "))}` : `<span class="tag gray">문자열 일치만</span> ${esc(sem.reason || "")}`),
   ];
   const cond = [
     ...(iv.focus ? [`<span class="pill">주력 분야 · ${esc(iv.focus.label)}</span>`] : []),
@@ -845,7 +1014,7 @@ function scoreBars(detail) {
 function searchScores(s) {
   if (!s) return "";
   return `<div class="search-scores">검색 · 룰 ${s.rule_rank ?? "-"}위 · dense ${fmt(s.dense, 4)} · BM25 ${fmt(s.bm25, 2)}
-    · RRF ${fmt(s.rrf, 5)} · rerank ${fmt(s.rerank, 4)}</div>`;
+    ${s.body != null ? `· 본문 ${fmt(s.body, 4)} ` : ""}· RRF ${fmt(s.rrf, 5)} · rerank ${fmt(s.rerank, 4)}</div>`;
 }
 const reasonList = rs => (rs || []).map(r => `
   <div class="reason">
@@ -1000,16 +1169,179 @@ $("toProposalBtn").onclick = async () => {
 };
 
 /* ---------- 5. 제안서 초안 ---------- */
-function renderProposal(r) {
-  const c = r.criteria;
+// 출처 "PDF · 파일명 p.3" → 원문 보기에서 그 파일·쪽으로 이동하는 링크
+const srcCell = src => {
+  const m = /^PDF · (.+) p\.(\d+)$/.exec(src || "");
+  return m ? `<span class="src-link" data-file="${esc(m[1])}" data-page="${m[2]}">${esc(src)}</span>` : esc(src);
+};
+function renderCriteria(c) {
   $("criteriaSource").textContent = c.source === "llm" ? "(공고서 PDF에서 AI 추출)" : "(대체값: 기술·가격 평가 비율 필드)";
   $("criteriaBody").innerHTML = c.items.map(k =>
-    `<tr><td>${esc(k.item)}</td><td class="mono">${k.score == null ? CONFIRM : esc(Math.round(k.score)) + "점"}</td><td class="muted">${esc(k.source)}</td></tr>`).join("") +
+    `<tr><td>${esc(k.item)}</td><td class="mono">${k.score == null ? CONFIRM : esc(Math.round(k.score)) + "점"}</td><td class="muted">${srcCell(k.source)}</td></tr>`).join("") +
     `<tr><td>과업 기간</td><td colspan="2">${c.period ? esc(c.period) : CONFIRM}</td></tr>`;
+}
+function renderProposal(r) {
+  renderCriteria(r.criteria);
   $("proposalPreview").innerHTML = r.proposal_html;  // 서버 Jinja2 autoescape로 생성된 HTML
   const threadId = state.threadId;
   $("downloadBtn").onclick = () => { location.href = withToken(`/api/proposal/${threadId}`); };
+  pdf.tender = r.tender.bidNtceNo;
+  pdf.files = null;
+  closePdf();
+  $("chatLog").innerHTML = "";
 }
+
+/* ---------- 공고서 원문 보기 (좌우 분할) ---------- */
+const pdf = { tender: null, files: null };
+function closePdf() {
+  $("pdfViewer").classList.add("hidden");
+  $("propCols").classList.remove("split");
+  $("pdfFrame").removeAttribute("src");
+  $("viewPdfBtn").textContent = "공고서 원문보기";
+}
+async function openPdf(file, page) {
+  if (!pdf.tender) return;
+  try {
+    if (!pdf.files) pdf.files = (await api(withToken(`/api/tender/${encodeURIComponent(pdf.tender)}/files`))).files;
+  } catch (e) { alert(e.message); return; }
+  if (!pdf.files.length) { alert("받아 둔 공고서 PDF가 없습니다."); return; }
+  $("pdfSelect").innerHTML = pdf.files.map(f => `<option value="${f.idx}">${esc(f.name)}</option>`).join("");
+  const f = pdf.files.find(x => x.name === file) || pdf.files[0];
+  $("pdfSelect").value = f.idx;
+  showPdf(f.idx, page);
+}
+function showPdf(idx, page) {
+  const url = withToken(`/api/tender/${encodeURIComponent(pdf.tender)}/pdf/${idx}`) + (page ? `#page=${page}` : "");
+  $("pdfFrame").src = "about:blank";  // 같은 파일의 다른 쪽으로 이동할 때도 다시 읽게 한다
+  setTimeout(() => { $("pdfFrame").src = url; }, 0);
+  $("pdfViewer").classList.remove("hidden");
+  $("propCols").classList.add("split");
+  $("viewPdfBtn").textContent = "원문 닫기";
+}
+$("viewPdfBtn").onclick = () => $("propCols").classList.contains("split") ? closePdf() : openPdf();
+$("pdfClose").onclick = closePdf;
+$("pdfSelect").onchange = e => showPdf(e.target.value);
+document.addEventListener("click", e => {
+  const a = e.target.closest(".src-link");
+  if (a) openPdf(a.dataset.file, a.dataset.page);
+});
+
+/* ---------- 제안서 보완 대화 ---------- */
+function addMsg(role, html) {
+  const div = document.createElement("div");
+  div.className = "msg " + role;
+  div.innerHTML = html;
+  $("chatLog").appendChild(div);
+  $("chatLog").scrollTop = $("chatLog").scrollHeight;
+  return div;
+}
+function flashSlots(keys) {
+  keys.forEach(k => document.querySelectorAll(`#proposalPreview [data-slot="${CSS.escape(k)}"]`).forEach(el => {
+    el.classList.add("flash");
+    setTimeout(() => el.classList.remove("flash"), 2500);
+  }));
+  const first = keys.length && document.querySelector(`#proposalPreview [data-slot="${CSS.escape(keys[0])}"]`);
+  if (first) first.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+function renderEdits(box, r) {
+  const edits = r.edits.map(e => `
+    <label class="edit"><input type="checkbox" value="${esc(e.key)}" checked>
+      <div><div class="lbl">${esc(e.label)} <span class="${e.grounded ? "src" : "ai-draft"}">${esc(e.grounded ? "(" + e.source + ")" : "[" + e.source + "]")}</span></div>
+        ${e.before ? `<div class="before">${esc(e.before)}</div>` : `<div class="before" style="text-decoration:none;">현재: [확인 필요]</div>`}
+        <div class="after">${esc(e.after)}</div></div></label>`).join("");
+  const skips = (r.skipped || []).map(s => `<div class="skip">제외: ${esc(s.label)} — ${esc(s.reason)}</div>`).join("");
+  if (!edits && !skips) return;
+  const wrap = document.createElement("div");
+  wrap.className = "edits";
+  wrap.innerHTML = edits + skips + (edits ? `<div class="row" style="justify-content:flex-end;"><button class="btn primary" type="button">선택한 변경 적용</button></div>` : "");
+  box.appendChild(wrap);
+  const btn = wrap.querySelector("button");
+  if (!btn) return;
+  btn.onclick = async () => {
+    const keys = [...wrap.querySelectorAll("input:checked")].map(i => i.value);
+    if (!keys.length) return;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span>적용 중';
+    try {
+      const a = await api("/api/proposal/apply", { method: "POST",
+        body: JSON.stringify({ token: session.token, thread_id: state.threadId, keys }) });
+      $("proposalPreview").innerHTML = a.proposal_html;
+      renderCriteria(a.criteria);
+      wrap.querySelectorAll("input").forEach(i => { i.disabled = true; });
+      btn.textContent = `${a.applied.length}건 적용됨`;
+      flashSlots(a.applied);
+    } catch (e) {
+      btn.disabled = false;
+      btn.textContent = "선택한 변경 적용";
+      addMsg("ai", esc(e.message));
+    }
+  };
+}
+// SSE POST: 이벤트마다 onEvent(event, data). error 이벤트는 예외로
+async function postStream(path, body, onEvent) {
+  const res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    throw new Error(d.detail || `요청 실패 (${res.status})`);
+  }
+  const reader = res.body.getReader(), dec = new TextDecoder();
+  let buf = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    for (let i; (i = buf.indexOf("\n\n")) >= 0;) {
+      const raw = buf.slice(0, i);
+      buf = buf.slice(i + 2);
+      const ev = (raw.match(/^event: (.*)$/m) || [])[1], data = JSON.parse((raw.match(/^data: (.*)$/m) || [])[1] || "null");
+      if (ev === "error") throw new Error(data.detail);
+      onEvent(ev, data);
+    }
+  }
+}
+// 서버가 보낸 실제 진행 단계(불러오기·근거 검색·AI 작성·검증)를 한 줄씩 표시
+function renderStep(box, st) {
+  let el = box.querySelector(`.st[data-id="${CSS.escape(st.id)}"]`);
+  if (!el) {
+    el = document.createElement("div");
+    el.className = "st";
+    el.dataset.id = st.id;
+    box.appendChild(el);
+  }
+  el.classList.toggle("done", st.status === "done");
+  el.innerHTML = (st.status === "running" ? '<span class="spinner"></span>' : "") + esc(st.label) +
+    (st.detail ? `<span class="det">${esc(st.detail)}</span>` : "");
+}
+$("chatForm").onsubmit = async e => {
+  e.preventDefault();
+  const message = $("chatInput").value.trim();
+  if (!message) return;
+  $("chatInput").value = "";
+  addMsg("user", esc(message));
+  const pending = addMsg("ai", '<div class="steps"></div><div class="reply"></div>');
+  const steps = pending.querySelector(".steps"), reply = pending.querySelector(".reply");
+  $("chatSend").disabled = true;
+  try {
+    let r = null;
+    await postStream("/api/proposal/chat/stream", { token: session.token, thread_id: state.threadId, message }, (ev, data) => {
+      if (ev === "step") renderStep(steps, data);
+      else if (ev === "result") r = data;
+      $("chatLog").scrollTop = $("chatLog").scrollHeight;
+    });
+    if (!r) throw new Error("AI 응답을 받지 못했습니다.");
+    reply.textContent = r.reply || (r.edits.length ? "아래 변경안을 확인해 주세요." : "바꿀 내용을 찾지 못했습니다.");
+    renderEdits(pending, r);
+  } catch (err) {
+    steps.querySelectorAll(".spinner").forEach(x => x.remove());
+    reply.textContent = err.message;
+  } finally {
+    $("chatSend").disabled = false;
+    $("chatLog").scrollTop = $("chatLog").scrollHeight;
+  }
+};
+$("chatInput").addEventListener("keydown", e => {
+  if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); $("chatForm").requestSubmit(); }
+});
 
 /* ---------- 이전 작업 ---------- */
 const STATUS_TAG = { recommended: '<span class="tag">추천 완료</span>', selected: '<span class="tag warn">공고 선택</span>',
