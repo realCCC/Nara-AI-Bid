@@ -28,7 +28,8 @@ def build_proposal_template(state: ProposalState, config: RunnableConfig):
     tender = tenders(state)[state["selected_tender_id"]]
     rec = next((r for r in state.get("recommendations", []) if r["bidNtceNo"] == tender["bidNtceNo"]), {})
     ai = proposal_writer.write(state["company_profile"], tender, state["criteria"])  # LLM 없으면 None → [확인 필요]
-    checks = checklist.build(tender, rec)["items"]
+    # 담당자가 확인한 체크리스트가 있으면 그대로 (다시 만들면 LLM 재호출로 항목이 달라질 수 있음)
+    checks = state.get("proposal_checks") or checklist.build(tender, rec)["items"]
     html = proposal.assemble_proposal(state["company_profile"], tender, state["criteria"], rec=rec, checks=checks, ai=ai)
     save(config, state, "done", proposal={"bidNtceNo": tender["bidNtceNo"], "criteria": state["criteria"], "html": html})
     return {"proposal_html": html, "proposal_ai": ai, "proposal_checks": checks}
