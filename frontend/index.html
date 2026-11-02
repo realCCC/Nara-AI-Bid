@@ -4,10 +4,15 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>나라장터 AI 입찰 어시스턴트 PoC</title>
+<meta name="description" content="업체 정보로 나라장터 공고를 추천하고, 공고서 근거와 함께 제안서 초안을 작성하는 AI 입찰 어시스턴트">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Serif+KR:wght@500;700&display=swap" rel="stylesheet">
 <style>
+  /* Hallmark · checked: 2026-11-02 · genre: modern-minimal (inferred)
+   * floor: fixed 48, 10a, 27, 34, 39a, 63, 19 · open: 67 (Korean copy, linter reads AI/PDF as caps) · reflex open: 38iii (.kind source badge)
+   * built: the project · redesign: polish · shape: app screen · v2.0.0 */
+  /* Hallmark · dismissed 3 · the left stripe on .live items marks AI stream lines against rule lines in the recommendation progress log, it is a state marker */
   /* 디자인 토큰: 차분한 회색 바탕 + 검정 글씨, AI 요소만 파란색 하나로 구분 */
   :root {
     --bg: #F3F4F6; --card: #FFFFFF; --soft: #F8F9FB; --line: #E2E5EA; --line-strong: #D5D9E0;
@@ -15,6 +20,9 @@
     --ai: #1D4ED8; --ai-text: #1E40AF; --ai-soft: #EBF0FD; --ai-bg: #F5F8FF; --ai-line: #D3DEFA;
     --ok: #12663F; --ok-soft: #E4F3EA; --warn: #8A4500; --warn-text: #6E3700; --warn-soft: #FCEFD9; --warn-line: #F1D3A6;
     --danger: #B91C1C; --danger-soft: #FDE8E8;
+    --on-ink: #FFFFFF; --on-ink-sub: #C5CAD3; --on-ink-faint: #A9B0BB; --ink-hover: #2A2F38;
+    --text-2: #3D4451; --disabled: #A3A9B3; --field-line: #C9CED6; --chip: #F1F2F4; --mark: #8A919C;
+    --paper: #FFFFFF; --paper-bg: #EEF0F3; --paper-line: #DADDE3; --flash: #FEF3C7;
     --primary: var(--ai); --llm: var(--ai);
     --radius: 14px;
     --sans: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
@@ -22,6 +30,7 @@
     --serif: "Noto Serif KR", serif;
   }
   * { box-sizing: border-box; }
+  html, body { overflow-x: clip; }
   body { margin: 0; background: var(--bg); color: var(--text); font-size: 15px; line-height: 1.55; font-family: var(--sans); }
   a { color: var(--ai); } a:hover { color: var(--ai-text); }
   .hidden { display: none !important; }
@@ -32,7 +41,7 @@
   header { position: sticky; top: 0; z-index: 10; background: var(--card); border-bottom: 1px solid var(--line); }
   .header-inner { max-width: 1280px; margin: 0 auto; padding: 10px 24px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 28px; }
   .brand { display: flex; align-items: center; gap: 10px; }
-  .brand .logo { width: 32px; height: 32px; border-radius: 8px; background: var(--ink); color: #fff; display: grid; place-items: center; font-weight: 700; font-size: 15px; }
+  .brand .logo { width: 32px; height: 32px; border-radius: 8px; background: var(--ink); color: var(--on-ink); display: grid; place-items: center; font-weight: 700; font-size: 15px; }
   .brand .name { display: flex; flex-direction: column; line-height: 1.25; }
   .brand .name b { font-size: 15px; }
   .brand .name span { font-size: 12px; color: var(--faint); }
@@ -45,25 +54,25 @@
   .tabs button { border: none; background: transparent; padding: 10px 14px; border-radius: 8px; cursor: pointer; color: var(--sub); font: inherit; font-size: 14px; }
   .tabs button.active { background: var(--bg); color: var(--text); font-weight: 600; }
   .tabs button:hover:not(:disabled):not(.active) { background: var(--soft); }
-  .tabs button:disabled { color: #A3A9B3; cursor: not-allowed; }
+  .tabs button:disabled { color: var(--disabled); cursor: not-allowed; }
 
   /* 로그인: 소개 + 폼 2단 */
   #loginView { min-height: calc(100vh - 60px); display: flex; align-items: center; justify-content: center; padding: 40px 16px; }
   .login-wrap { width: 100%; max-width: 1040px; display: flex; flex-wrap: wrap; background: var(--card); border: 1px solid var(--line); border-radius: 18px; overflow: hidden; }
-  .login-intro { flex: 1 1 420px; background: var(--ink); color: #fff; padding: 48px 44px; display: flex; flex-direction: column; gap: 26px; }
-  .login-intro h1 { margin: 0; font-size: 32px; line-height: 1.3; letter-spacing: -0.02em; }
+  .login-intro { flex: 1 1 420px; background: var(--ink); color: var(--on-ink); padding: 48px 44px; display: flex; flex-direction: column; gap: 26px; }
+  .login-intro h1 { text-wrap: balance; margin: 0; font-size: 32px; line-height: 1.3; letter-spacing: -0.02em; }
   .login-intro ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 18px; }
   .login-intro li { display: flex; gap: 14px; }
   .login-intro li .n { flex: 0 0 28px; height: 28px; border-radius: 8px; background: var(--ai); display: grid; place-items: center; font-family: var(--mono); font-size: 13px; font-weight: 600; }
-  .login-intro li p { margin: 2px 0 0; color: #C5CAD3; font-size: 14px; }
-  .login-intro .foot { margin-top: auto; font-size: 13px; color: #A9B0BB; }
+  .login-intro li p { margin: 2px 0 0; color: var(--on-ink-sub); font-size: 14px; }
+  .login-intro .foot { margin-top: auto; font-size: 13px; color: var(--on-ink-faint); }
   .login-card { flex: 1 1 380px; padding: 48px 44px; display: flex; flex-direction: column; justify-content: center; }
   .login-card h2 { margin: 0; font-size: 24px; }
   label { display: block; font-size: 14px; color: var(--text); margin: 16px 0 6px; font-weight: 600; }
   input[type=text], input[type=password] {
-    width: 100%; height: 48px; padding: 0 14px; border: 1px solid #C9CED6; border-radius: 10px; font: inherit; background: #fff; color: var(--text); outline: none;
+    width: 100%; height: 48px; padding: 0 14px; border: 1px solid var(--field-line); border-radius: 10px; font: inherit; background: var(--paper); color: var(--text);
   }
-  input:focus, textarea:focus { border-color: var(--ai); box-shadow: 0 0 0 3px var(--ai-soft); }
+  input:focus-visible, textarea:focus-visible { outline: 2px solid var(--ai); outline-offset: 1px; }
   .error { color: var(--danger); background: var(--danger-soft); padding: 9px 12px; border-radius: 10px; margin-top: 12px; display: none; font-size: 13px; }
   .sample-note { font-size: 13px; color: var(--warn-text); margin-top: 20px; background: var(--warn-soft); padding: 10px 12px; border-radius: 10px; }
 
@@ -81,12 +90,12 @@
   .kv dt { font-size: 12px; color: var(--faint); }
   .kv dd { margin: 2px 0 0; font-weight: 600; }
   .kv dd.hint, .hint { font-size: 12px; color: var(--faint); font-weight: 400; line-height: 1.45; margin-top: 2px; }
-  .term { text-decoration: underline dotted #8A919C; text-underline-offset: 3px; cursor: help; }
+  .term { text-decoration: underline dotted var(--mark); text-underline-offset: 3px; cursor: help; }
   .code-list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 400; }
   .code-list li { display: flex; justify-content: space-between; gap: 8px; }
   .code-list .mono { color: var(--faint); }
   .kw-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
-  .kw { font-size: 13px; font-weight: 600; padding: 4px 10px; border-radius: 999px; background: var(--ink); color: #fff; }
+  .kw { font-size: 13px; font-weight: 600; padding: 4px 10px; border-radius: 999px; background: var(--ink); color: var(--on-ink); }
   .ai-box { margin-top: 16px; padding: 14px; border-radius: 10px; background: var(--ai-bg); border: 1px solid var(--ai-line); }
   .ai-box h4 { margin: 0; display: flex; align-items: center; gap: 6px; font-size: 13px; }
   .ai-box ul { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
@@ -97,27 +106,28 @@
   .side-sec + .side-sec { border-top: 1px solid var(--line); padding-top: 14px; margin-top: 14px; }
 
   /* 공통 */
-  .page-title { margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -0.01em; }
+  .page-title { text-wrap: balance; margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -0.01em; }
   .muted { color: var(--sub); font-size: 13px; }
   .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
   .btn { border: 1px solid var(--line-strong); border-radius: 10px; padding: 11px 16px; min-height: 44px; cursor: pointer; font: inherit; font-size: 14px; font-weight: 600; background: var(--card); color: var(--text); }
   .btn:hover:not(:disabled) { background: var(--soft); }
-  .btn.primary { background: var(--ink); border-color: var(--ink); color: #fff; }
-  .btn.primary:hover:not(:disabled) { background: #2A2F38; }
+  .btn.primary { background: var(--ink); border-color: var(--ink); color: var(--on-ink); }
+  .btn.primary:hover:not(:disabled) { background: var(--ink-hover); }
   .btn:disabled { opacity: .45; cursor: not-allowed; }
+  .btn:active:not(:disabled), .ghost:active, .tabs button:active:not(:disabled), .rec-body > summary:active { transform: translateY(1px); }
   .btn.block { width: 100%; height: 48px; }
   .tag { display: inline-block; font-size: 12px; padding: 3px 9px; border-radius: 999px; background: var(--ai-soft); color: var(--ai-text); margin: 2px 4px 2px 0; font-weight: 600; }
   .tag.llm { background: var(--ai-soft); color: var(--ai-text); }
   .tag.ok { background: var(--ok-soft); color: var(--ok); }
   .tag.warn { background: var(--warn-soft); color: var(--warn); }
-  .tag.gray { background: #F1F2F4; color: #3D4451; }
+  .tag.gray { background: var(--chip); color: var(--text-2); }
   .tag.danger { background: var(--danger-soft); color: var(--danger); }
   .kind { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 6px; line-height: 1.4; }
-  .kind.ai { background: var(--ai); color: #fff; }
-  .kind.rule { border: 1px solid #C9CED6; color: #3D4451; padding: 1px 6px; }
+  .kind.ai { background: var(--ai); color: var(--on-ink); }
+  .kind.rule { border: 1px solid var(--field-line); color: var(--text-2); padding: 1px 6px; }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
-  th { font-size: 12px; color: #3D4451; font-weight: 600; background: var(--soft); }
+  th { font-size: 12px; color: var(--text-2); font-weight: 600; background: var(--soft); }
   .table-box { border: 1px solid var(--line); border-radius: 10px; overflow-x: auto; }
   .table-box tr:last-child td { border-bottom: none; }
   .sec-card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 22px 24px; margin-bottom: 20px; }
@@ -126,6 +136,9 @@
   .ai-draft { background: var(--ai-soft); color: var(--ai-text); padding: 1px 6px; border-radius: 4px; font-weight: 600; font-size: 12px; }
   .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--ai-line); border-top-color: var(--ai); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -2px; margin-right: 6px; }
   @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+  }
 
   /* 추천 단계 5개: 세로 타임라인. 단계마다 상태·숫자·소요 시간 + 그 단계에서 스트리밍된 중간 결과 */
   .funnel { list-style: none; margin: 16px 0 0; padding: 0; display: flex; flex-direction: column; }
@@ -137,7 +150,7 @@
   .stage .dot { position: absolute; left: 0; top: 0; width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center;
     background: var(--card); border: 2px solid var(--line-strong); color: var(--faint); font-family: var(--mono); font-size: 13px; font-weight: 600; }
   .stage.active .dot { border-color: var(--ai); color: var(--ai); box-shadow: 0 0 0 4px var(--ai-bg); animation: pulse 1.6s ease-in-out infinite; }
-  .stage.done .dot { background: var(--ai); border-color: var(--ai); color: #fff; font-size: 0; }
+  .stage.done .dot { background: var(--ai); border-color: var(--ai); color: var(--on-ink); font-size: 0; }
   .stage.done .dot::after { content: "✓"; font-size: 15px; }
   .stage.skip .dot { border-style: dashed; }
   @keyframes pulse { 50% { box-shadow: 0 0 0 7px var(--ai-bg); } }
@@ -172,10 +185,10 @@
   .live summary { cursor: pointer; color: var(--sub); font-size: 12px; }
   .live ol { margin: 6px 0 0; padding-left: 22px; display: flex; flex-direction: column; gap: 2px; }
   .live ol .mono { color: var(--faint); font-size: 12px; }
-  .live .q-text { margin-top: 6px; padding: 6px 10px; border-radius: 8px; background: var(--soft); color: #3D4451; }
+  .live .q-text { margin-top: 6px; padding: 6px 10px; border-radius: 8px; background: var(--soft); color: var(--text-2); }
   @keyframes fadein { from { opacity: 0; transform: translateY(-4px); } }
   .bar { height: 4px; background: var(--line); border-radius: 4px; overflow: hidden; margin-top: 16px; }
-  .bar > div { height: 100%; width: 0; background: var(--ai); transition: width .4s; }
+  .bar > div { height: 100%; width: 100%; background: var(--ai); transform: scaleX(0); transform-origin: left center; transition: transform .4s; }
 
   /* 이번 추천에 AI가 쓴 정보 */
   .status-row { margin-top: 18px; padding: 16px; border-radius: 12px; background: var(--soft); border: 1px solid var(--line); }
@@ -190,7 +203,7 @@
   /* 인터뷰 */
   .q { margin: 14px 0 0; padding: 18px 20px; border: 1px solid var(--line); border-radius: 12px; min-width: 0; }
   .q legend { padding: 0 6px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
-  .q legend .qn { font-family: var(--mono); font-size: 13px; color: var(--faint); }
+  .q legend .qn { font-size: 13px; font-weight: 600; color: var(--faint); }
   .q legend .qt { font-size: 16px; font-weight: 600; }
   .q legend .qd { font-size: 13px; color: var(--faint); }
   .q .opts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
@@ -200,15 +213,15 @@
   .q .opt input { margin: 3px 0 0; width: 16px; height: 16px; accent-color: var(--ai); flex-shrink: 0; }
   .q .opt .ol { display: block; font-weight: 600; font-size: 14px; }
   .q .opt .oh { display: block; font-size: 12px; color: var(--sub); }
-  .q textarea { width: 100%; margin-top: 10px; padding: 12px 14px; border-radius: 10px; border: 1px solid #C9CED6; font: inherit; font-size: 14px; color: var(--text); background: var(--card); resize: vertical; outline: none; }
+  .q textarea { width: 100%; margin-top: 10px; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--field-line); font: inherit; font-size: 14px; color: var(--text); background: var(--card); resize: vertical; }
 
   /* 제외 사유 막대 */
   .ex-list { list-style: none; margin: 14px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px; font-size: 13px; }
   .ex-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
   .ex-list .ex-name { flex: 0 0 220px; }
   .ex-list .ex-name small { display: block; color: var(--faint); font-size: 12px; }
-  .ex-list .ex-bar { flex: 1 1 200px; height: 8px; border-radius: 4px; background: #F1F2F4; }
-  .ex-list .ex-bar > div { height: 8px; border-radius: 4px; background: #8A919C; }
+  .ex-list .ex-bar { flex: 1 1 200px; height: 8px; border-radius: 4px; background: var(--chip); }
+  .ex-list .ex-bar > div { height: 8px; border-radius: 4px; background: var(--mark); }
   .ex-list .ex-n { flex: 0 0 48px; text-align: right; font-family: var(--mono); }
 
   /* 추천 카드 */
@@ -216,8 +229,8 @@
   .rec { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px 24px; }
   .rec.selected { border-color: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); }
   .rec-top { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
-  .rank { width: 40px; height: 40px; border-radius: 10px; background: #F1F2F4; display: grid; place-items: center; font-family: var(--mono); font-weight: 600; font-size: 17px; flex: 0 0 40px; }
-  .rank.top { background: var(--ink); color: #fff; }
+  .rank { width: 40px; height: 40px; border-radius: 10px; background: var(--chip); display: grid; place-items: center; font-family: var(--mono); font-weight: 600; font-size: 17px; flex: 0 0 40px; }
+  .rank.top { background: var(--ink); color: var(--on-ink); }
   .rec-title { flex: 1 1 360px; min-width: 0; }
   .rec h4 { margin: 0; font-size: 17px; line-height: 1.4; }
   .rec .meta { margin-top: 4px; font-size: 13px; color: var(--sub); }
@@ -238,11 +251,11 @@
   .reasons { display: flex; flex-direction: column; gap: 8px; }
   .reason { padding: 12px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); font-size: 14px; }
   .reason .src { font-size: 12px; color: var(--faint); margin-top: 6px; }
-  .quote { margin-top: 8px; padding: 8px 12px; background: var(--soft); border-radius: 8px; font-size: 13px; color: #3D4451; }
+  .quote { margin-top: 8px; padding: 8px 12px; background: var(--soft); border-radius: 8px; font-size: 13px; color: var(--text-2); }
   .flag { padding: 10px 14px; border-radius: 10px; background: var(--warn-soft); color: var(--warn-text); font-size: 13px; }
   .note-excluded { color: var(--danger); font-size: 13px; margin: 0; }
   .verify-box { margin-top: 14px; padding: 14px 16px; border-radius: 12px; border: 1px solid var(--ai-line); background: var(--ai-bg); font-size: 13px; }
-  .verify-box p { margin: 4px 0 0; color: #3D4451; }
+  .verify-box p { margin: 4px 0 0; color: var(--text-2); }
   .sbar { font-size: 13px; }
   .sbar .top { display: flex; justify-content: space-between; gap: 8px; }
   .sbar .w { color: var(--faint); }
@@ -274,7 +287,7 @@
   .prop-cols.split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
   .prop-cols.split .crit { grid-column: 1 / -1; }
   .viewer { padding: 0; overflow: hidden; position: sticky; top: 12px; }
-  .viewer iframe { display: block; width: 100%; height: calc(100vh - 110px); border: 0; background: #EEF0F3; }
+  .viewer iframe { display: block; width: 100%; height: calc(100vh - 110px); border: 0; background: var(--paper-bg); }
   .viewer select { min-height: 40px; max-width: 320px; border: 1px solid var(--line-strong); border-radius: 8px; padding: 0 8px; font: inherit; font-size: 13px; }
   .src-link { color: var(--ai); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
   /* 제안서 보완 대화 */
@@ -283,7 +296,7 @@
   .chat-log { display: flex; flex-direction: column; gap: 8px; max-height: 360px; overflow-y: auto; margin: 10px 0; }
   .chat-log:empty { display: none; }
   .msg { max-width: 92%; padding: 8px 12px; border-radius: 10px; font-size: 13px; line-height: 1.6; white-space: pre-wrap; }
-  .msg.user { align-self: flex-end; background: var(--ai); color: #fff; }
+  .msg.user { align-self: flex-end; background: var(--ai); color: var(--on-ink); }
   .msg.ai { align-self: flex-start; background: var(--card); border: 1px solid var(--ai-line); }
   .edits { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; white-space: normal; }
   .edit { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); cursor: pointer; }
@@ -293,14 +306,14 @@
   .edit .after { font-size: 13px; }
   .edits .skip { font-size: 12px; color: var(--warn-text); }
   .msg .steps { display: flex; flex-direction: column; gap: 3px; margin-bottom: 6px; font-size: 12px; color: var(--sub); white-space: normal; }
-  .msg .st.done::before { content: "✓ "; color: var(--ok, #15803D); font-weight: 700; }
+  .msg .st.done::before { content: "✓ "; color: var(--ok); font-weight: 700; }
   .msg .st .det { color: var(--sub); opacity: .85; margin-left: 4px; }
   .msg .reply { white-space: pre-wrap; }
   .chat-input { display: flex; gap: 8px; align-items: flex-end; }
-  .chat-input textarea { flex: 1; padding: 10px 12px; border-radius: 10px; border: 1px solid #C9CED6; font: inherit; font-size: 14px; resize: vertical; outline: none; background: var(--card); }
-  .proposal [data-slot].flash { background: #FEF3C7; border-radius: 3px; transition: background 1.5s; }
-  .paper-bg { background: #EEF0F3; padding: 28px 20px; }
-  .proposal { max-width: 720px; margin: 0 auto; background: #fff; border: 1px solid #DADDE3; padding: 44px 48px; font-size: 14px; line-height: 1.75; }
+  .chat-input textarea { flex: 1; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--field-line); font: inherit; font-size: 14px; resize: vertical; background: var(--card); }
+  .proposal [data-slot].flash { background: var(--flash); border-radius: 3px; transition: background-color 1.5s; }
+  .paper-bg { background: var(--paper-bg); padding: 28px 20px; }
+  .proposal { max-width: 720px; margin: 0 auto; background: var(--paper); border: 1px solid var(--paper-line); padding: 44px 48px; font-size: 14px; line-height: 1.75; }
   .proposal h3 { font-family: var(--serif); font-size: 22px; line-height: 1.4; }
   .proposal h4 { margin: 26px 0 8px; font-family: var(--serif); font-size: 16px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
   .proposal p { margin: 6px 0; }
@@ -426,27 +439,27 @@
           <li class="stage ai" id="st1" title="LLM이 업체정보를 읽고 맞춤 문항을 만들고, 자유 입력도 조건으로 해석합니다.">
             <span class="dot">1</span><div class="stage-box"><div class="stage-head">
               <span class="kind ai">AI</span><span class="step-name">1단계 · 맞춤 인터뷰</span><span class="state"></span>
-              <span class="sum"><span class="num">–</span><span class="lbl" id="st1Label">조건 반영</span></span><span class="t"></span></div>
+              <span class="sum"><span class="num"></span><span class="lbl" id="st1Label">조건 반영</span></span><span class="t"></span></div>
               <p class="hint"></p><ol class="live"></ol></div></li>
           <li class="stage rule" id="st2" title="PDF 보유·업종·참가 제한·지역·예산·인터뷰 조건으로 참여할 수 없는 공고를 거릅니다.">
             <span class="dot">2</span><div class="stage-box"><div class="stage-head">
               <span class="kind rule">룰</span><span class="step-name">2단계 · 자격 필터</span><span class="state"></span>
-              <span class="sum"><span class="num">–</span><span class="lbl" id="st2Label">건 통과</span></span><span class="t"></span></div>
+              <span class="sum"><span class="num"></span><span class="lbl" id="st2Label">건 통과</span></span><span class="t"></span></div>
               <p class="hint"></p><ol class="live"></ol></div></li>
           <li class="stage ai" id="st3" title="AI가 만든 검색 문장으로 임베딩 의미 검색(dense) + BM25 + 룰 순위를 RRF로 합친 뒤 리랭커로 다시 정렬해 상위 건을 고릅니다.">
             <span class="dot">3</span><div class="stage-box"><div class="stage-head">
               <span class="kind ai">AI</span><span class="step-name">3단계 · 의미 검색·리랭크</span><span class="state"></span>
-              <span class="sum"><span class="num">–</span><span class="lbl" id="st3Label">건 선별</span></span><span class="t"></span></div>
+              <span class="sum"><span class="num"></span><span class="lbl" id="st3Label">건 선별</span></span><span class="t"></span></div>
               <p class="hint"></p><ol class="live"></ol></div></li>
           <li class="stage ai" id="st4" title="LLM이 공고서 PDF 근거를 읽고 순위를 매기며, 근거마다 원문 출처를 대조합니다.">
             <span class="dot">4</span><div class="stage-box"><div class="stage-head">
               <span class="kind ai">AI</span><span class="step-name">4단계 · 공고서 근거 순위</span><span class="state"></span>
-              <span class="sum"><span class="num">–</span><span class="lbl" id="st5Label">건</span></span><span class="t"></span></div>
+              <span class="sum"><span class="num"></span><span class="lbl" id="st5Label">건</span></span><span class="t"></span></div>
               <p class="hint"></p><ol class="live"></ol></div></li>
           <li class="stage ai" id="st5" title="검증 서브에이전트가 상위 후보의 적합도를 다시 평가하고 순위를 조정합니다.">
             <span class="dot">5</span><div class="stage-box"><div class="stage-head">
               <span class="kind ai">AI</span><span class="step-name">5단계 · 추천 검증</span><span class="state"></span>
-              <span class="sum"><span class="num">–</span><span class="lbl" id="st6Label">건 재평가</span></span><span class="t"></span></div>
+              <span class="sum"><span class="num"></span><span class="lbl" id="st6Label">건 재평가</span></span><span class="t"></span></div>
               <p class="hint"></p><ol class="live"></ol></div></li>
         </ol>
         <div class="status-row hidden" id="statusRow"></div>
@@ -489,7 +502,7 @@
         <div class="error" id="selectError"></div>
         <div class="row" style="justify-content:flex-end; margin-top:16px; gap:8px;">
           <button class="btn" data-go="recommend">다른 공고 보기</button>
-          <button class="btn primary" id="toProposalBtn" disabled>제안서 초안 만들기 →</button>
+          <button class="btn primary" id="toProposalBtn" disabled>제안서 초안 만들기</button>
         </div>
       </div>
     </section>
@@ -627,12 +640,12 @@ function resetRecommend() {
   $("pSynonyms").classList.add("hidden");
   $("runBtn").textContent = "추천 시작";
   $("runBtn").disabled = false;
-  $("progressBar").style.width = "0%";
+  $("progressBar").style.transform = "scaleX(0)";
   $("progressText").textContent = "대기 중";
   $("toProposalBtn").disabled = true;
   $("selectedBox").innerHTML = '<p class="muted">맞춤 추천에서 공고를 선택하세요.</p>';
   enableTab("proposal", false);
-  ["st1", "st2", "st3", "st4", "st5"].forEach(id => setStage(id, "–"));
+  ["st1", "st2", "st3", "st4", "st5"].forEach(id => setStage(id, ""));
   Object.entries(STAGE_LABELS).forEach(([id, t]) => { $(id).textContent = t; });
 }
 const STAGE_LABELS = { st1Label: "조건 반영", st2Label: "건 통과", st3Label: "건 선별", st5Label: "건", st6Label: "건 재평가" };
@@ -805,7 +818,7 @@ const STAGE_END = ["interview", "filter_and_score", "rerank", "rag_recommend", "
 function showProgress(p, sec) {
   const done = new Set(p.done), info = p.info || {};
   const step = PROGRESS_STEPS.filter(([n]) => !n || done.has(n)).pop();
-  $("progressBar").style.width = step[1] + "%";
+  $("progressBar").style.transform = `scaleX(${step[1] / 100})`;
   const cur = step[2] ? `${$(step[2]).querySelector(".step-name").textContent} · ` : "";
   $("progressText").innerHTML = `<span class="spinner"></span>${esc(cur + step[3])} <span class="mono">(${sec}초)</span>`;
   document.querySelectorAll(".funnel .hint").forEach(h => { h.textContent = ""; });
@@ -892,7 +905,7 @@ async function submitInterview(answers) {
   lastAnswers = answers;
   $("interviewCard").classList.add("hidden");
   const nCond = Object.values(answers).filter(x => x && (!Array.isArray(x) || x.length)).length;
-  setStage("st1", nCond || "–", "done");
+  setStage("st1", nCond || "", "done");
   $("st1Label").textContent = nCond ? "개 조건 반영" : "건너뜀 (기본 조건)";
   setStage("st2", "…", "active");
   showProgress({ done: [], info: {} }, 0);
@@ -905,12 +918,12 @@ async function submitInterview(answers) {
     $("st2Label").textContent = `건 통과 (${f.total}건 중)`;
     setStage("st3", f.top, "done");
     $("st3Label").textContent = s.path === "semantic" ? `건 선별${s.rerank === "applied" ? " · 리랭크" : ""}` : "건 (키워드 검색만)";
-    setStage("st4", isLlm ? r.recommendations.length : "–", isLlm ? "done" : "skip");
+    setStage("st4", isLlm ? r.recommendations.length : "", isLlm ? "done" : "skip");
     $("st5Label").textContent = RAG_LABEL[r.rag_status] || "건";
     const verified = v && v.status === "passed";
-    setStage("st5", verified ? v.checked : "–", verified ? "done" : "skip");
+    setStage("st5", verified ? v.checked : "", verified ? "done" : "skip");
     $("st6Label").textContent = verified ? `건 재평가 · ${v.changed ? "순위 조정" : "순위 유지"}${v.flagged ? ` · 자격 의심 ${v.flagged}건` : ""}` : "생략";
-    $("progressBar").style.width = "100%";
+    $("progressBar").style.transform = "scaleX(1)";
     $("progressText").textContent = isLlm ? "출처 대조 완료" : "룰 추천 완료 — Azure 키를 입력하면 공고서 근거 순위·검증이 추가됩니다";
     renderStatus(r);
     const maxN = Math.max(1, ...r.rule_counts.map(x => x.count));
@@ -925,7 +938,7 @@ async function submitInterview(answers) {
   } catch (e) {
     live.stop();
     $("progressText").textContent = "오류: " + e.message;
-    $("progressBar").style.width = "0%";
+    $("progressBar").style.transform = "scaleX(0)";
   } finally {
     state.running = false;
     $("runBtn").disabled = false;
@@ -1164,7 +1177,7 @@ $("toProposalBtn").onclick = async () => {
     $("selectError").style.display = "block";
   } finally {
     btn.disabled = !checklistDone();
-    btn.textContent = "제안서 초안 만들기 →";
+    btn.textContent = "제안서 초안 만들기";
   }
 };
 
