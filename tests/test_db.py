@@ -71,7 +71,9 @@ def test_graph_e2e_rule_mode(db, monkeypatch):
     assert graph.get_state(cfg).next == ("select_tender",)
 
     pick = state["recommendations"][0]["bidNtceNo"]
-    state = graph.invoke(Command(resume=pick), cfg)
+    confirmed = [{"id": "c0", "category": "참가자격", "text": "담당자가 확인한 테스트 항목", "origin": "field"}]
+    state = graph.invoke(Command(resume={"bidNtceNo": pick, "checks": confirmed}), cfg)
     assert state["selected_tender_id"] == pick
+    assert state["proposal_checks"] == confirmed  # 확인한 체크리스트를 다시 만들지 않고 그대로 초안에
     assert "제안서 초안" in state["proposal_html"] and "[확인 필요]" in state["proposal_html"]
     assert repo.list_runs("C001", db)[0]["status"] == "done"

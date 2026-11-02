@@ -296,7 +296,8 @@ def select(body: SelectIn):
     if missing:
         raise HTTPException(400, f"확인하지 않은 항목이 {len(missing)}개 있습니다.")
     try:
-        state = graph.invoke(Command(resume=body.bidNtceNo), _cfg(body.thread_id, company))
+        state = graph.invoke(Command(resume={"bidNtceNo": body.bidNtceNo, "checks": made["items"]}),
+                             _cfg(body.thread_id, company))
     except ValueError as e:
         raise HTTPException(400, str(e))
     repo.save_checklist(body.thread_id, body.bidNtceNo, made)

@@ -3,21 +3,41 @@
 칸(slot) key: understanding · certifications · vision · pm · period
              items/<i>/plan · items/<i>/evidence · items/<i>/sub/<j>   (i: 평가항목 순번, j: 세부항목 순번)
              phases/<단계>/content|period · staffing/<역할>/count|duty
-근거 표시: user → (담당자 입력), company_doc → 인용이 업체 문서에 있으면 (업체 문서 · 파일),
+근거 표시: user → 사용자가 실제로 한 말에 있으면 (담당자 입력), company_doc → 인용이 업체 문서에 있으면 (업체 문서 · 파일),
           tender → 인용이 공고서에 있으면 (공고서 p.쪽), 그 밖에는 [AI 초안·검토 필요].
-사실형 칸(인증·면허, PM, 업체 근거)은 근거가 확인될 때만 변경안에 넣는다.
+사실형 칸(인증·면허, PM, 업체 근거)은 담당자 입력·업체 문서로 확인될 때만 변경안에 넣는다.
+공고서는 발주기관의 요구 조건이라 우리 회사 사실의 근거가 될 수 없다.
 ctx: 서버가 작업(thread)마다 들고 있는 dict — company, tender, criteria, rec, checks, ai.
 """
 import copy
+import re
 
 from backend import config
 from backend.tools import company_docs, llm, proposal, proposal_writer
 from backend.tools.evidence import _norm
 from backend.tools.retrieval import retrieve
+from backend.tools.rules import tokenize
 
 SOURCE_LABEL = {"user": "담당자 입력", "company_doc": "업체 문서", "tender": "공고서", "general": "AI 일반론"}
 FACT_KEYS = {"certifications", "pm"}
 CHAT_K = 4
+# 담당자 말 대조에서 빼는 일반어 (제안서 문체로 바꾸며 LLM이 덧붙이는 말)
+USER_STOP = {"보유", "보유함", "인증", "경력", "등록", "면허", "취득", "담당", "총괄", "책임자", "수행", "있음", "투입", "인원"}
+
+
+def said_by_user(text: str, user_text: str) -> bool:
+    """LLM이 source=user라고 한 내용이 사용자가 실제로 한 말에 있는지.
+    숫자·영문이 든 단어(ISO9001, 12년, 5명)는 전부, 나머지 단어는 절반 이상이 사용자 말에 있어야 한다."""
+    said = _norm(user_text).lower()
+    if not said:
+        return False
+    words = [w.strip(".:;'\"") for w in tokenize(text)]
+    words = [w for w in words if len(w) >= 2 and w not in USER_STOP]
+    marked = [w for w in words if re.search(r"[0-9A-Za-z]", w)]
+    plain = [w for w in words if w not in marked]
+    if not words or not all(_norm(w).lower() in said for w in marked):
+        return False
+    return not plain or sum(_norm(w) in said for w in plain) * 2 >= len(plain)
 
 
 def _text(f) -> str | None:
@@ -67,8 +87,9 @@ def _tender_fill(text: str, cites: list[dict], chunks: list[dict]) -> dict:
     return {"text": text, "grounded": bool(cites), "sources": list(dict.fromkeys(pages))}
 
 
-def validate(raw: dict, ctx: dict, company_chunks: list[dict], tender_chunks: list[dict]) -> tuple[list[dict], list[dict]]:
-    """LLM 변경안 → (적용 가능한 변경안, 제외한 칸과 이유)."""
+def validate(raw: dict, ctx: dict, company_chunks: list[dict], tender_chunks: list[dict],
+             user_text: str = "") -> tuple[list[dict], list[dict]]:
+    """LLM 변경안 → (적용 가능한 변경안, 제외한 칸과 이유). user_text: 사용자가 대화에서 한 말 (source=user 대조용)."""
     by_key = {s["key"]: s for s in slots(ctx)}
     staff = ctx["company"].get("보유인력") or {}
     edits, skipped, seen = [], [], set()
@@ -77,16 +98,25 @@ def validate(raw: dict, ctx: dict, company_chunks: list[dict], tender_chunks: li
         if not s or not text or s["key"] in seen:
             continue
         src, cites = e.get("source") or "general", e.get("cites") or []
+        user_ok = src == "user" and said_by_user(text, user_text)
         if s["kind"] == "count":
-            digits = "".join(ch for ch in text if ch.isdigit())
+            nums = set(re.findall(r"\d+", text))
             role = s["key"].split("/")[1]
-            if not digits or not 0 < int(digits) <= staff.get(role, 0):
+            if len(nums) != 1:  # "PM 1명 포함 3명"·"2~3명"처럼 숫자가 여러 개면 몇 명인지 정할 수 없다
+                skipped.append({"key": s["key"], "label": s["label"], "reason": "투입 인원이 숫자 하나로 정해지지 않음"})
+                continue
+            n = int(nums.pop())
+            if not 0 < n <= staff.get(role, 0):
                 skipped.append({"key": s["key"], "label": s["label"], "reason": f"보유 인원({staff.get(role, 0)}명) 범위를 벗어남"})
                 continue
-            value = int(digits)
+            value = n
         else:
-            if src == "user":
-                value = {"text": text, "grounded": True, "sources": ["담당자 입력"]}
+            if s["kind"] == "fact" and src == "tender":
+                skipped.append({"key": s["key"], "label": s["label"],
+                                "reason": "공고서는 요구 조건이라 우리 회사 사실의 근거가 될 수 없음"})
+                continue
+            if src == "user":  # 사용자 말에서 확인되지 않으면 AI 초안으로 낮춘다 (사실형 칸은 아래에서 제외)
+                value = {"text": text, "grounded": user_ok, "sources": ["담당자 입력"] if user_ok else []}
             elif src == "company_doc":
                 value = proposal_writer.fill({"text": text, "cites": cites}, company_chunks)
             elif src == "tender":
@@ -100,7 +130,7 @@ def validate(raw: dict, ctx: dict, company_chunks: list[dict], tender_chunks: li
                 skipped.append({"key": s["key"], "label": s["label"], "reason": "근거(담당자 입력·업체 문서)가 확인되지 않음"})
                 continue
         seen.add(s["key"])
-        info = checked if s["kind"] == "plain" else value if isinstance(value, dict) else {"grounded": src == "user", "sources": []}
+        info = checked if s["kind"] == "plain" else value if isinstance(value, dict) else {"grounded": user_ok, "sources": []}
         grounded = info["grounded"]
         label = ", ".join(info["sources"]) if info["sources"] else SOURCE_LABEL.get(src, "AI")
         edits.append({"key": s["key"], "label": s["label"], "before": s["current"],
@@ -185,7 +215,8 @@ def chat_steps(ctx: dict, message: str, history: list[dict]):
 
     t0 = time.monotonic()
     yield step("verify", "running", "인용·인원 등 근거 검증 중")
-    edits, skipped = validate(raw, ctx, ctx["company_chunks"], ctx["tender_chunks"])
+    user_text = " ".join([*(h["text"] for h in history if h["role"] == "user"), message])
+    edits, skipped = validate(raw, ctx, ctx["company_chunks"], ctx["tender_chunks"], user_text)
     grounded = sum(e["grounded"] for e in edits)
     yield step("verify", "done", f"검증 완료: 적용 가능 {len(edits)}건 · 제외 {len(skipped)}건",
                f"근거 확인 {grounded}건 · AI 초안 {len(edits) - grounded}건", t0)

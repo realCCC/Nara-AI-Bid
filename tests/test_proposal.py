@@ -151,7 +151,8 @@ def test_chat_validate_and_apply():
         {"key": "staffing/기획자/count", "text": "2", "source": "user"},
         {"key": "phases/착수/period", "text": "1주", "source": "tender"},              # 인용 없는 '공고서' 주장 → AI 표시
         {"key": "없는칸", "text": "x", "source": "user"}]}
-    edits, skipped = proposal_chat.validate(raw, ctx, [], tender_chunks)
+    said = "PM은 홍길동 부장이고 경력 12년입니다. 기획자 2명, PM 5명 넣어 주세요"
+    edits, skipped = proposal_chat.validate(raw, ctx, [], tender_chunks, said)
     by = {e["key"]: e for e in edits}
     assert set(by) == {"pm", "period", "items/0/plan", "items/0/sub/0", "staffing/기획자/count", "phases/착수/period"}
     assert by["period"]["grounded"] is True and by["period"]["source"] == "공고서 p.2"
@@ -170,10 +171,48 @@ def test_chat_validate_and_apply():
 def test_chat_evidence_edit_overrides_rule_evidence():
     ctx = _ctx()
     ctx["criteria"]["items"][0]["item"] = "투입 인력"   # 룰 근거(보유인력)가 생기는 항목
-    edits, _ = proposal_chat.validate({"edits": [{"key": "items/0/evidence", "text": "강사 5명 보유", "source": "user"}]}, ctx, [], [])
+    edits, _ = proposal_chat.validate({"edits": [{"key": "items/0/evidence", "text": "강사 5명 보유", "source": "user"}]},
+                                      ctx, [], [], "우리 강사 5명 있어요")
     ai, crit = proposal_chat.apply(ctx, edits)
     html = proposal.assemble_proposal(COMPANY, TENDER, crit, ai=ai)
     assert "강사 5명 보유" in html
+
+
+def test_chat_fact_slot_rejects_tender_quote():
+    """공고서의 자격 요건 문장으로 우리 회사 인증·근거 칸을 채우면 안 된다."""
+    ctx = _ctx()
+    chunks = [{"file": "공고서.pdf", "page": 3, "text": "입찰 참가자격: ISO 9001 인증 보유 업체"}]
+    raw = {"edits": [{"key": "certifications", "text": "ISO 9001 인증 보유", "source": "tender",
+                      "cites": [{"file": "공고서.pdf", "quote": "ISO 9001 인증 보유 업체"}]},
+                     {"key": "items/0/evidence", "text": "ISO 9001", "source": "tender",
+                      "cites": [{"file": "공고서.pdf", "quote": "ISO 9001 인증 보유 업체"}]}]}
+    edits, skipped = proposal_chat.validate(raw, ctx, [], chunks)
+    assert edits == [] and {s["key"] for s in skipped} == {"certifications", "items/0/evidence"}
+    assert "공고서" in skipped[0]["reason"]
+
+
+def test_chat_user_source_must_match_what_user_said():
+    """LLM이 source=user라고 해도 사용자가 그 말을 하지 않았으면 담당자 입력으로 인정하지 않는다."""
+    ctx = _ctx()
+    raw = {"edits": [{"key": "certifications", "text": "ISO 27001, ISMS 인증 보유", "source": "user"},
+                     {"key": "pm", "text": "김철수 이사 (경력 20년)", "source": "user"},
+                     {"key": "vision", "text": "현장 중심 운영", "source": "user"}]}
+    said = "ISO 27001이랑 ISMS 있어요. PM은 홍길동 부장"
+    edits, skipped = proposal_chat.validate(raw, ctx, [], [], said)
+    by = {e["key"]: e for e in edits}
+    assert by["certifications"]["grounded"] is True and by["certifications"]["source"] == "담당자 입력"
+    assert {s["key"] for s in skipped} == {"pm"}                       # 사실형 + 사용자 말에 없음 → 제외
+    assert by["vision"]["grounded"] is False and by["vision"]["source"] == "AI 초안·검토 필요"  # 서술형 → AI 초안으로
+
+
+def test_chat_staff_count_needs_single_number():
+    ctx = _ctx()
+    raw = {"edits": [{"key": "staffing/기획자/count", "text": "PM 1명 포함 12명", "source": "user"}]}
+    edits, skipped = proposal_chat.validate(raw, ctx, [], [], "PM 1명 포함 12명")
+    assert edits == [] and "숫자 하나" in skipped[0]["reason"]
+    edits, _ = proposal_chat.validate({"edits": [{"key": "staffing/기획자/count", "text": "기획자 2명", "source": "user"}]},
+                                      ctx, [], [], "기획자는 2명")
+    assert edits[0]["value"] == 2 and edits[0]["grounded"] is True
 
 
 def test_chat_steps_emit_real_progress(monkeypatch):
