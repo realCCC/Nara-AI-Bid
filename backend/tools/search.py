@@ -12,6 +12,7 @@ from functools import lru_cache
 from typing import Protocol
 
 from backend import config
+from backend.tools import activity
 from backend.tracing import traced
 from backend.tools.rules import tokenize
 
@@ -19,12 +20,29 @@ log = logging.getLogger(__name__)
 RRF_K = 60
 RERANK_TOP = 15
 _NOUN_TAGS = ("NN", "SL", "SH", "SN", "XR")
+MASTER_GENERIC = {"사업", "용역", "서비스", "운영", "지원", "관리", "기획", "대행", "지역", "행사"}  # 공고마다 흔해 사업을 가르지 못하는 말
 DOC_FIELDS = ("bidNtceNm", "purchsObjPrdctList", "pubPrcrmntLrgClsfcNm", "pubPrcrmntMidClsfcNm", "pubPrcrmntClsfcNm",
               "dminsttNm")
 
 
 def tender_doc(tender: dict) -> str:
     return " ".join(str(tender.get(k) or "") for k in DOC_FIELDS)
+
+
+def master_match(key: str, doc: str) -> bool:
+    """마스터키가 공고 문서에 있는가: 붙여 쓴 문자열 일치, 또는 일반어를 뺀 키의 명사가 모두 있음
+    ('AI 교육' ↔ 'AI 활용 교육', '지역 축제 운영' ↔ '한마음축제 기획')."""
+    if key.replace(" ", "").lower() in doc.replace(" ", "").lower():
+        return True
+    tokens = set(ko_tokens(key)) - MASTER_GENERIC
+    return bool(tokens) and tokens <= set(ko_tokens(doc))
+
+
+def master_first(result: dict, docs: dict[str, str], key: str) -> dict:
+    """마스터키 일치 공고를 앞으로 (제외는 없다). 일치끼리·나머지끼리는 기존 순서를 지켜 역량·의미 순위를 유지한다."""
+    hits = [i for i in result["order"] if master_match(key, docs[i])]
+    rest = [i for i in result["order"] if i not in set(hits)]
+    return {**result, "order": [*hits, *rest], "master": {"key": key, "hits": len(hits)}}
 
 
 def template_query(company: dict) -> str:
@@ -238,7 +256,9 @@ def rerank(result: dict, docs: dict[str, str], top: int = RERANK_TOP) -> dict:
         return {**result, "rerank": "skipped", "rerank_reason": "keyword_fallback 경로"}
     head = result["order"][:top]
     try:
-        raw = _reranker().predict([(result["query"], docs[i]) for i in head]).tolist()
+        with activity.step("리랭크", f"리랭커 실행 중 · 후보 {len(head)}건") as done:
+            raw = _reranker().predict([(result["query"], docs[i]) for i in head]).tolist()
+            done["message"] = f"후보 {len(head)}건 재정렬 완료"
     except Exception as e:
         log.warning("리랭크 생략: %s", e)
         return {**result, "rerank": "skipped", "rerank_reason": f"리랭커 실패: {e}"}

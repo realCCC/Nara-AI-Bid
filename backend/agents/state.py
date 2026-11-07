@@ -15,7 +15,9 @@ class ProposalState(TypedDict, total=False):
     tenders_path: str | None
     interview_questions: list[dict]
     interview_answers: dict
-    prefs: dict
+    master_review: bool  # 인터뷰를 물어봤으면 마스터키도 확인받는다
+    master_draft: dict   # {"candidates": [{key, reason, prompt}], "source": llm|template}
+    prefs: dict          # 인터뷰 결과 + 확정 마스터키(master: {key, prompt, source, edited})
     candidates: list[dict]
     search: dict
     filter_log: dict

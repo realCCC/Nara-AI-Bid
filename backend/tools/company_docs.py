@@ -9,6 +9,7 @@ import re
 from pathlib import Path
 
 from backend import config
+from backend.tools import activity
 from backend.tools.pdf import chunk_pages, parse_pdf
 
 log = logging.getLogger(__name__)
@@ -60,4 +61,7 @@ def search(chunks: list[dict], query: str, k: int = 4, vecs=None) -> list[dict]:
     """BM25 + dense(vecs가 있으면) RRF 상위 k."""
     from backend.tools.retrieval import hybrid_retrieve
 
-    return hybrid_retrieve(chunks, query, k, vecs) if chunks else []
+    hits = hybrid_retrieve(chunks, query, k, vecs) if chunks else []
+    if chunks:
+        activity.note("RAG", f"업체 문서 청크 {len(hits)}개 검색 ({'벡터+BM25' if vecs is not None else 'BM25'})")
+    return hits

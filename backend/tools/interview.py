@@ -1,7 +1,8 @@
 """선택형 인터뷰(추천 전 HITL): LLM이 업체정보를 읽고 문항·선택지를 만든다 → 답변 → 추가 필터(I1)·가중치·지역 가점·키워드 의미 확장.
 
 선택지마다 effect(정해진 효과 어휘)를 붙이고, 코드가 effect만 검증·적용한다. LLM이 없거나 출력이 검증을 못 넘으면 기본 문항.
-마지막 문항은 자유 입력(note): LLM이 같은 effect로 해석하고(있으면 선택 답보다 우선), 원문은 검색 문장·RAG 프롬프트에 붙인다.
+마지막 문항은 자유 입력(note): LLM이 같은 effect로 해석한다(있으면 선택 답보다 우선).
+인터뷰 뒤에는 마스터키(이번에 가장 원하는 핵심 사업)와 역량 맞춤 검색 프롬프트를 담당자가 확인하고, 그 값이 검색·순위·검증의 최우선 기준이 된다.
 답이 없거나 "all"이면 기본값.
 """
 import json
@@ -17,6 +18,7 @@ PRIORITY_BOOST = 0.15  # 중요기준으로 고른 항목 가중치 +0.15, 나�
 REGION_BONUS = 5.0     # 우리 지역 발주처 가점 (0-100점 기준)
 NOTE_GROUP = "직접 입력"  # 자유 입력에서 나온 키워드의 그룹 (주력 분야와 상관없이 의미 매칭에 쓴다)
 NOTE_MAX = 500
+MASTER_KEY_MAX, MASTER_PROMPT_MAX, MAX_MASTERS = 30, 300, 5
 MAX_QUESTIONS, MAX_OPTIONS = 6, 6
 
 ALL = {"value": "all", "label": "전체 (기본값)", "effect": {}}
@@ -252,10 +254,108 @@ def parse_note(note: str | None, company: dict) -> dict:
     return clean_effect(raw, company)
 
 
+def answer_lines(questions: list[dict], prefs: dict) -> list[str]:
+    """고른 답 → '문항: 선택지' 줄. 내부 값이 아니라 담당자가 본 문구로 적는다."""
+    out = []
+    for q in questions:
+        v = prefs["answers"].get(q["id"])
+        if v is None:
+            continue
+        if q.get("type") == "text":
+            out.append(f"{q['title']}: {v}")
+        else:
+            labels = {o["value"]: o["label"] for o in q["options"]}
+            out.append(f"{q['title']}: {', '.join(labels[x] for x in (v if isinstance(v, list) else [v]))}")
+    return out
+
+
+def clean_master_key(text) -> str:
+    return " ".join(text.split())[:MASTER_KEY_MAX] if isinstance(text, str) else ""
+
+
+def clean_master_prompt(text) -> str:
+    return " ".join(text.split())[:MASTER_PROMPT_MAX] if isinstance(text, str) else ""
+
+
+def template_master_prompt(company: dict, key: str) -> str:
+    """LLM 없음·실패: 마스터키 + 역량 키워드 (지어낼 여지가 없다)."""
+    keywords = [k for k in company.get("역량키워드", []) if k not in _BROAD][:4]
+    return clean_master_prompt(f"{key} 관련 공공 용역 사업" + (f" 역량: {', '.join(keywords)}" if keywords else ""))
+
+
+def _anchored(key: str, prompt: str) -> str:
+    """검색 프롬프트에 마스터키의 핵심 단어가 빠지면 키를 앞에 붙인다 (마스터키가 검색 중심이어야 한다)."""
+    return prompt if all(w in prompt for w in key.split() if w not in _BROAD) else clean_master_prompt(f"{key} {prompt}")
+
+
+def _clean_masters(raw: list[dict] | None) -> list[dict]:
+    out: dict[str, dict] = {}
+    for c in (raw or [])[:MAX_MASTERS]:
+        key, prompt = clean_master_key(c.get("key")), clean_master_prompt(c.get("prompt"))
+        if key and prompt and key not in out:
+            out[key] = {"key": key, "reason": str(c.get("reason") or "").strip()[:80], "prompt": _anchored(key, prompt)}
+    return list(out.values())
+
+
+def _fallback_masters(company: dict, prefs: dict) -> list[dict]:
+    """인터뷰 주력 분야 → 과거 실적 키워드 → 역량 키워드 순으로 후보."""
+    focus = prefs.get("focus") or {}
+    past = [k for h in company.get("과거실적", []) for k in h.get("키워드", [])]
+    keys = [k for k in dict.fromkeys([*focus.get("keywords", []), *past, *company.get("역량키워드", [])]) if k not in _BROAD]
+    return [{"key": k, "reason": "업체 역량·실적 키워드", "prompt": template_master_prompt(company, k)}
+            for k in map(clean_master_key, keys[:MAX_MASTERS]) if k]
+
+
+def build_masters(company: dict, questions: list[dict], prefs: dict) -> dict:
+    """업체 역량 + 인터뷰 답변 → 마스터키 후보와 후보별 검색 프롬프트. source: llm | template."""
+    if config.llm_enabled():
+        from backend.tools import llm
+
+        cands = _clean_masters(llm.master_candidates(company, answer_lines(questions, prefs)))
+        if len(cands) >= 2:
+            return {"candidates": cands, "source": "llm"}
+    return {"candidates": _fallback_masters(company, prefs), "source": "template"}
+
+
+def master_prompt(company: dict, key: str, answers: list[str]) -> str:
+    """담당자가 직접 적은 마스터키 → 역량에 맞춘 검색 프롬프트."""
+    prompt = ""
+    if config.llm_enabled():
+        from backend.tools import llm
+
+        prompt = clean_master_prompt(llm.master_search_prompt(company, key, answers))
+    return _anchored(key, prompt) if prompt else template_master_prompt(company, key)
+
+
+def resolve_master(draft: dict, picked: dict | None, company: dict) -> dict | None:
+    """담당자 확인 값 → 확정 마스터키. 비우면 첫 후보, 후보도 없으면 None (기존 검색 경로)."""
+    picked, cands = picked or {}, draft["candidates"]
+    key = clean_master_key(picked.get("key")) or (cands[0]["key"] if cands else "")
+    if not key:
+        return None
+    cand = next((c for c in cands if c["key"] == key), None)
+    base = cand["prompt"] if cand else template_master_prompt(company, key)
+    prompt = clean_master_prompt(picked.get("prompt")) or base
+    return {"key": key, "prompt": prompt, "source": draft["source"] if cand else "custom", "edited": prompt != base}
+
+
+def with_master(prefs: dict, master: dict | None, lines: list[str]) -> dict:
+    """확정 마스터키를 prefs에 넣는다. 공백 없는 키는 S2 문자열 일치·PDF 청크 검색에도 쓴다."""
+    term = _term(master["key"]) if master else None
+    expanded = [*prefs["expanded"], {"term": term, "group": NOTE_GROUP}] if term else prefs["expanded"]
+    return {**prefs, "master": master, "answer_lines": lines, "expanded": expanded}
+
+
 def with_note(company: dict, prefs: dict | None) -> dict:
-    """LLM 판단(RAG 순위·검증)용 프로필: 자유 입력 원문을 '추가요청'으로 붙인다."""
-    note = (prefs or {}).get("note")
-    return {**company, "추가요청": note} if note else company
+    """LLM 판단(RAG 순위·검증)용 프로필: 확정 마스터키·검색 프롬프트, 고른 답, 자유 입력 원문을 붙인다."""
+    prefs, extra = prefs or {}, {}
+    if master := prefs.get("master"):
+        extra |= {"마스터키": master["key"], "검색프롬프트": master["prompt"]}
+    if prefs.get("answer_lines"):
+        extra["인터뷰답변"] = prefs["answer_lines"]
+    if prefs.get("note"):
+        extra["추가요청"] = prefs["note"]
+    return {**company, **extra} if extra else company
 
 
 def expand_company(company: dict, prefs: dict | None) -> dict:
