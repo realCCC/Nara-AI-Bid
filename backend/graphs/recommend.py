@@ -11,7 +11,7 @@ from backend.tools import keyword_profile, llm
 from backend.tools.interview import expand_company, interview_filter, semantic_keywords
 from backend.tools.loaders import load_region_limits, tenders_by_no
 from backend.tools.rules import hard_filter, recommend_by_rules
-from backend.tools.search import hybrid_search, keyword_similarity, rerank, template_query, tender_doc
+from backend.tools.search import hybrid_search, keyword_similarity, master_first, rerank, template_query, tender_doc
 
 
 def rule_stage(tenders: list[dict], company: dict, region_limits: dict, prefs: dict | None = None) -> dict:
@@ -37,10 +37,13 @@ _QUERY_CACHE: dict[str, str] = {}  # 같은 프로필은 같은 문장 → 재�
 
 
 def make_query(company: dict, prefs: dict | None = None) -> tuple[str, str]:
-    """업체정보 → 검색 문장. 주력 분야를 골랐으면 그 분야 문장, LLM이 없거나 실패하면 템플릿.
+    """검색 문장. 마스터키가 있으면 담당자가 확인한 검색 프롬프트를 그대로 쓴다.
+    없으면 업체정보 → 검색 문장: 주력 분야를 골랐으면 그 분야 문장, LLM이 없거나 실패하면 템플릿.
     고른 유사 표현과 자유 입력 원문은 뒤에 붙인다.
     (키워드 의미 프로필 유사어는 붙이지 않는다 — 20여 개를 붙이면 dense·리랭커 초점이 흐려져 실측에서 상위 10건이 나빠졌다)"""
     prefs = prefs or {}
+    if prefs.get("master"):
+        return prefs["master"]["prompt"], "master"
     terms = [e["term"] for e in prefs.get("expanded", [])]
     tail = (f" 관련 표현: {', '.join(terms)}" if terms else "") + (f" 요청: {prefs['note']}" if prefs.get("note") else "")
     if prefs.get("focus"):
@@ -58,6 +61,8 @@ def search_stage(candidates: list[dict], tenders: dict[str, dict], company: dict
     docs = {c["bidNtceNo"]: tender_doc(tenders[c["bidNtceNo"]]) for c in candidates}
     result = hybrid_search(docs, query, rule_order=[c["bidNtceNo"] for c in candidates]) if docs else \
         {"path": "keyword_fallback", "reason": "후보 없음", "query": query, "order": [], "scores": {}, "lists": []}
+    if master := (prefs or {}).get("master"):
+        result = master_first(result, docs, master["key"])
     return {**result, "query_source": source}
 
 
@@ -65,10 +70,12 @@ def rerank_stage(search: dict, candidates: list[dict], tenders: dict[str, dict],
     top_k = top_k or settings.TOP_K
     docs = {c["bidNtceNo"]: tender_doc(tenders[c["bidNtceNo"]]) for c in candidates}
     result = rerank(search, docs) if candidates else {**search, "rerank": "skipped", "rerank_reason": "후보 없음"}
+    if candidates and search.get("master"):  # 리랭커가 섞어도 마스터키 일치 공고가 앞에 오게
+        result = master_first(result, docs, search["master"]["key"])
     by_no = {c["bidNtceNo"]: c for c in candidates}
     top = [{**by_no[no], "rank": i, "search": result["scores"][no]} for i, no in enumerate(result["order"][:top_k], 1)]
     meta = {k: result.get(k) for k in ("path", "reason", "query", "query_source", "lists", "rerank", "rerank_reason",
-                                       "semantic")}
+                                       "semantic", "master")}
     return {"top": top, "search": meta}
 
 

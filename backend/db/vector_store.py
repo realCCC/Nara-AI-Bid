@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 from backend import config
+from backend.tools import activity
 
 log = logging.getLogger(__name__)
 SCHEMA = Path(__file__).with_name("vector_schema.sql")
@@ -33,8 +34,11 @@ def _conn():
     except Exception as e:  # 미설치·DB 미기동
         _ERROR = (time.monotonic(), f"pgvector 사용 불가: {e}")
         log.warning("%s (%d초 뒤 다시 시도)", _ERROR[1], RETRY_SEC)
+        reason = (str(e).splitlines() or [type(e).__name__])[0][:100]
+        activity.note("벡터DB", f"연결 실패 → BM25로 대체, {RETRY_SEC}초 뒤 재시도 ({reason})", "warn")
         raise RuntimeError(_ERROR[1]) from e
     _CONN, _ERROR = conn, None
+    activity.note("벡터DB", "pgvector 연결 성공")
     return conn
 
 
@@ -43,6 +47,7 @@ def load(tender_no: str, keys: list[str]) -> dict:
     rows = _conn().execute(
         "SELECT text_hash, embedding FROM tender_chunks WHERE bid_ntce_no = %s AND model = %s AND text_hash = ANY(%s)",
         (tender_no, config.EMBEDDING_MODEL, list(keys))).fetchall()
+    activity.note("벡터DB", f"조회 · {tender_no} 저장된 벡터 {len(rows)}/{len(keys)}개")
     return {k: v.to_numpy() for k, v in rows}  # pgvector.Vector → numpy
 
 
@@ -59,6 +64,7 @@ def save(tender_no: str, rows: list[tuple[str, dict, object]], keep: list[str]):
                 " ON CONFLICT (bid_ntce_no, model, text_hash) DO NOTHING",
                 [(tender_no, config.EMBEDDING_MODEL, k, c.get("file"), c.get("page"), c.get("pages"), c.get("section"),
                   c["text"], c.get("search_text") or c["text"], v) for k, c, v in rows])
+    activity.note("벡터DB", f"저장 · {tender_no} 벡터 {len(rows)}개")
 
 
 def tender_scores(query_vec, tender_nos: list[str], top: int = 3) -> dict[str, float]:
@@ -71,6 +77,7 @@ def tender_scores(query_vec, tender_nos: list[str], top: int = 3) -> dict[str, f
         " FROM tender_chunks WHERE model = %s AND bid_ntce_no = ANY(%s)) x"
         " WHERE rn <= %s GROUP BY bid_ntce_no",
         (query_vec, query_vec, config.EMBEDDING_MODEL, list(tender_nos), top)).fetchall()
+    activity.note("벡터DB", f"본문 점수 조회 · 공고 {len(tender_nos)}건 중 {len(rows)}건")
     return {no: float(s) for no, s in rows}
 
 
@@ -87,5 +94,6 @@ def search(query_vec, k: int = 5, tender_no: str | None = None, section: str | N
         "SELECT bid_ntce_no, file, page, pages, section, text, search_text, 1 - (embedding <=> %s) AS score"
         f" FROM tender_chunks WHERE {' AND '.join(where)} ORDER BY embedding <=> %s LIMIT %s",
         (query_vec, *params, query_vec, k)).fetchall()
+    activity.note("벡터DB", f"유사 청크 조회 · {len(rows)}개")
     cols = ("bidNtceNo", "file", "page", "pages", "section", "text", "search_text", "score")
     return [dict(zip(cols, r)) | {"score": round(float(r[-1]), 4)} for r in rows]

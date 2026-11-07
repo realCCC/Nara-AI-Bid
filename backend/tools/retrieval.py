@@ -8,6 +8,7 @@ import logging
 from functools import lru_cache
 
 from backend import config
+from backend.tools import activity
 from backend.tracing import chunk_view, traced
 from backend.tools.rules import tokenize
 
@@ -49,13 +50,23 @@ def _azure_encode(texts: list[str]):
     return vecs / np.linalg.norm(vecs, axis=1, keepdims=True)
 
 
-def encode(texts: list[str]):
-    """정규화 벡터 (행렬). bge: 로컬 BGE-M3, azure: Azure OpenAI 임베딩 API (EMBED_DIM 차원)."""
-    if not texts:
-        raise ValueError("빈 입력")
+def _vectors(texts: list[str]):
     if config.EMBEDDING_PROVIDER == "azure":
         return _azure_encode(texts)
     return _bge().encode(texts, normalize_embeddings=True, batch_size=32)
+
+
+def encode(texts: list[str]):
+    """정규화 벡터 (행렬). bge: 로컬 BGE-M3, azure: Azure OpenAI 임베딩 API (EMBED_DIM 차원).
+    검색 문장 하나를 바꾸는 호출은 짧고 잦아서 로그 팝업에 남기지 않는다."""
+    if not texts:
+        raise ValueError("빈 입력")
+    if len(texts) == 1:
+        return _vectors(texts)
+    with activity.step("임베딩", f"벡터 생성 중 · 텍스트 {len(texts)}개 ({config.EMBEDDING_PROVIDER})") as done:
+        vecs = _vectors(texts)
+        done["message"] = f"벡터 {len(texts)}개 생성 완료"
+    return vecs
 
 
 def search_text(chunk: dict) -> str:
@@ -78,11 +89,14 @@ def retrieve(chunks: list[dict], query: str, k: int = 3, tender_no: str | None =
             scores = (vecs @ embed([query])[0]).tolist()
         except Exception as e:  # 미설치·모델 로드 실패 → 키워드 겹침
             log.info("청크 임베딩 미사용: %s", e)
+    how = "벡터 유사도" if scores is not None else "키워드"
     if scores is None:
         q = tokenize(query)
         scores = [len(q & tokenize(search_text(c))) for c in chunks]
     order = sorted(range(len(chunks)), key=lambda i: -scores[i])
-    return [chunks[i] for i in order[:k] if scores[i] > 0]
+    hits = [chunks[i] for i in order[:k] if scores[i] > 0]
+    activity.note("RAG", f"공고서 청크 {len(hits)}개 검색 ({how})")
+    return hits
 
 
 def _chunk_key(text: str) -> str:

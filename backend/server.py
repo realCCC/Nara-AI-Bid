@@ -4,8 +4,10 @@
 """
 import json
 import os
+import time
 import uuid
 from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -18,13 +20,14 @@ from pydantic import BaseModel
 from backend import config
 from backend.db import repository as repo
 from backend.graphs.proposal import build_graph
-from backend.tools import checklist, proposal, proposal_chat
+from backend.tools import activity, checklist, proposal, proposal_chat
+from backend.tools.interview import answer_lines, clean_master_key, master_prompt
 from backend.tools.pdf import fetch_tender_pdfs
 from backend.tools.loaders import tenders_by_no
 from backend.tools.rules import RULE_LABELS, RULES
 
 ROOT = Path(__file__).resolve().parent.parent
-app = FastAPI(title="나라장터 AI 입찰 어시스턴트 PoC")
+app = FastAPI(title="입찰에이전트 PoC")
 graph = build_graph(InMemorySaver())
 repo.init_db()
 
@@ -41,6 +44,16 @@ class InterviewIn(BaseModel):
     token: str
     thread_id: str
     answers: dict[str, str | list[str] | None] = {}  # 건너뛴 문항은 생략·null·빈 목록 → 기본값 "전체", note는 자유 입력
+
+
+class MasterPromptIn(BaseModel):
+    token: str
+    thread_id: str
+    key: str
+
+
+class MasterIn(MasterPromptIn):
+    prompt: str = ""  # 담당자가 확인·수정한 검색 프롬프트. 비우면 후보의 프롬프트
 
 
 class SelectIn(BaseModel):
@@ -104,8 +117,9 @@ def _step_event(node: str, update) -> dict | None:
     """노드 완료 이벤트 → 화면에 바로 보여 줄 그 단계의 중간 결과. 화면에 쓸 게 없는 노드는 None."""
     if not isinstance(update, dict):
         return None
-    if node == "interview":
-        return {"node": node, "conditions": len((update.get("prefs") or {}).get("answers") or {})}
+    if node == "review_master":
+        prefs = update["prefs"]
+        return {"node": node, "conditions": len(prefs["answers"]), "master": prefs["master"]}
     if node == "filter_and_score":
         f, sem = update["filter_log"]["funnel"], update["search"]["semantic"]
         return {"node": node, "total": f["total"], "hard_pass": f["hard_pass"], "top": _brief(update["candidates"], 5),
@@ -114,7 +128,7 @@ def _step_event(node: str, update) -> dict | None:
         s, by_no = update["search"], tenders_by_no()
         top = [{"bidNtceNo": no, "bidNtceNm": by_no[no]["bidNtceNm"], "rrf": s["scores"][no]["rrf"]} for no in s["order"][:5]]
         return {"node": node, "path": s.get("path"), "query": s.get("query"), "query_source": s.get("query_source"),
-                "lists": s.get("lists"), "top": top}
+                "lists": s.get("lists"), "master": s.get("master"), "top": top}
     if node == "rerank":
         return {"node": node, "rerank": update["search"].get("rerank"), "top": _brief(update["top10"])}
     if node == "rag_recommend":
@@ -122,6 +136,14 @@ def _step_event(node: str, update) -> dict | None:
     if node == "verify_recommendations":
         return {"node": node, "verification": update["verification"], "top": _brief(update["recommendations"])}
     return None
+
+
+@contextmanager
+def _logged(company: dict, stage: str, start: str):
+    """기능 하나의 시작·결과를 로그 팝업에 남기고, 그 안의 LLM·RAG·벡터DB 호출도 이 업체 로그로 묶는다."""
+    activity.bind(company["업체ID"])
+    with activity.step(stage, start) as done:
+        yield done
 
 
 def _sse(event: str, data) -> str:
@@ -166,6 +188,7 @@ def login(body: LoginIn):
         raise HTTPException(401, result["error"])
     token = uuid.uuid4().hex
     SESSIONS[token] = result["profile"]["업체ID"]
+    activity.add(result["profile"]["업체ID"], "로그인", f"{result['profile']['회사명']} 로그인")
     return {"token": token, "profile": result["profile"], "code_names": _code_names()}
 
 
@@ -173,6 +196,12 @@ def _code_names() -> dict[str, str]:
     """조달 세부분류번호 → 세부분류명 (공고 데이터의 pubPrcrmntClsfcNo·Nm). 업체 업종·추천 근거 출처를 이름으로 보여 주는 데 쓴다."""
     return {t["pubPrcrmntClsfcNo"]: t["pubPrcrmntClsfcNm"] for t in tenders_by_no().values()
             if t.get("pubPrcrmntClsfcNo") and t.get("pubPrcrmntClsfcNm")}
+
+
+@app.get("/api/logs")
+def logs(token: str, after: int = 0):
+    """로그 팝업: after 다음의 주요 기능 로그."""
+    return {"logs": activity.since(_company(token)["업체ID"], after)}
 
 
 @app.post("/api/logout")
@@ -194,9 +223,12 @@ def recommend(token: str):
     """추천 시작 → 인터뷰(HITL ⓪)에서 멈추고 객관식 문항을 돌려준다."""
     company = _company(token)
     thread_id = uuid.uuid4().hex
-    graph.invoke({"company_profile": company}, _cfg(thread_id, company))
-    tasks = graph.get_state(_cfg(thread_id)).tasks
-    questions = next((i.value["questions"] for t in tasks for i in t.interrupts), [])
+    with _logged(company, "맞춤 인터뷰", "문항 작성 시작") as done:
+        graph.invoke({"company_profile": company}, _cfg(thread_id, company))
+        tasks = graph.get_state(_cfg(thread_id)).tasks
+        questions = next((i.value["questions"] for t in tasks for i in t.interrupts), [])
+        ai = any(q.get("source") == "llm" for q in questions)
+        done |= {"message": f"{'AI 맞춤' if ai else '기본'} 문항 {len(questions)}개 준비", "level": "info" if ai else "warn"}
     return {"thread_id": thread_id, "questions": questions}
 
 
@@ -207,37 +239,75 @@ def _check_interview(body: InterviewIn) -> dict:
     return company
 
 
-def _resume_interview(body: InterviewIn, company: dict) -> Iterator[tuple[str, dict]]:
-    """인터뷰 답변으로 재개 → 추천 Worker·RAG·검증 → HITL ①에서 멈춤. 노드가 끝날 때마다 (노드, 갱신값)을 낸다."""
+def _check_master(body: MasterPromptIn) -> dict:
+    company = _owned(body.token, body.thread_id)
+    if graph.get_state(_cfg(body.thread_id)).next != ("review_master",):
+        raise HTTPException(409, "이미 확인한 마스터키입니다. 추천을 다시 실행하세요.")
+    return company
+
+
+def _resume_master(body: MasterIn, company: dict) -> Iterator[tuple[str, dict]]:
+    """확인한 마스터키로 재개 → 추천 Worker·RAG·검증 → HITL ①에서 멈춤. 노드가 끝날 때마다 (노드, 갱신값)을 낸다."""
     PROGRESS[body.thread_id] = {"company": company["업체ID"], "done": [], "info": {}}
+    activity.add(company["업체ID"], "추천 실행", "추천 시작")
+    t0 = last = time.perf_counter()
     # invoke 대신 stream: 서브그래프(필터→검색→리랭크) 노드까지 끝날 때마다 진행 상황을 남긴다
-    for _ns, chunk in graph.stream(Command(resume={"answers": {k: v for k, v in body.answers.items() if v}}),
-                                   _cfg(body.thread_id, company), stream_mode="updates", subgraphs=True):
+    stream = graph.stream(Command(resume={"key": body.key, "prompt": body.prompt}), _cfg(body.thread_id, company),
+                          stream_mode="updates", subgraphs=True)
+    for _ns, chunk in activity.bound(company["업체ID"], stream):
         for node, update in chunk.items():
             if not node.startswith("__"):
                 _track(body.thread_id, node, update)
+                if entry := activity.node_log(node, update):
+                    now = time.perf_counter()
+                    stage, message, level = entry
+                    activity.add(company["업체ID"], stage, f"{message} ({now - last:.1f}초)", level)
+                    last = now
                 yield node, update
+    activity.add(company["업체ID"], "추천 실행", f"추천 완료 ({time.perf_counter() - t0:.1f}초)")
 
 
 @app.post("/api/interview")
 def answer_interview(body: InterviewIn):
-    for _ in _resume_interview(body, _check_interview(body)):
-        pass
-    return _interview_result(body.thread_id)
+    """인터뷰 답변 → 마스터키 후보·검색 프롬프트를 만들고 담당자 확인에서 멈춘다."""
+    company = _check_interview(body)
+    with _logged(company, "마스터키 후보", "인터뷰 답변 접수 · 후보 작성 시작") as done:
+        graph.invoke(Command(resume={"answers": {k: v for k, v in body.answers.items() if v}}), _cfg(body.thread_id, company))
+        tasks = graph.get_state(_cfg(body.thread_id)).tasks
+        draft = next(i.value for t in tasks for i in t.interrupts)
+        ai = draft["source"] == "llm"
+        done |= {"message": f"{'AI' if ai else '역량 키워드 기준'} 후보 {len(draft['candidates'])}개 준비",
+                 "level": "info" if ai else "warn"}
+    return {"thread_id": body.thread_id, **draft}
 
 
-@app.post("/api/interview/stream")
-def answer_interview_stream(body: InterviewIn):
-    """/api/interview와 같은 실행을 SSE로: 단계가 끝날 때마다 step 이벤트(중간 결과), 마지막에 result 이벤트."""
-    company = _check_interview(body)  # 권한·중복 오류는 스트림 시작 전에 HTTP 오류로
+@app.post("/api/master/prompt")
+def write_master_prompt(body: MasterPromptIn):
+    """담당자가 직접 적은 마스터키로 검색 프롬프트를 작성한다 (그래프는 확인 단계에 그대로 멈춰 있다)."""
+    company = _check_master(body)
+    key = clean_master_key(body.key)
+    if not key:
+        raise HTTPException(400, "마스터키를 입력하세요.")
+    state = graph.get_state(_cfg(body.thread_id)).values
+    with _logged(company, "검색 프롬프트", f"직접 입력 '{key}' 프롬프트 작성 시작") as done:
+        prompt = master_prompt(company, key, answer_lines(state["interview_questions"], state["prefs"]))
+        done["message"] = "프롬프트 작성 완료"
+    return {"prompt": prompt}
+
+
+@app.post("/api/master/stream")
+def confirm_master_stream(body: MasterIn):
+    """마스터키 확인 → 추천 실행을 SSE로: 단계가 끝날 때마다 step 이벤트(중간 결과), 마지막에 result 이벤트."""
+    company = _check_master(body)  # 권한·중복 오류는 스트림 시작 전에 HTTP 오류로
 
     def events():
         try:
-            for node, update in _resume_interview(body, company):
+            for node, update in _resume_master(body, company):
                 if (ev := _step_event(node, update)) is not None:
                     yield _sse("step", ev)
             yield _sse("result", _interview_result(body.thread_id))
         except Exception as e:  # 스트림 도중 실패 → 화면에 오류 표시
+            activity.add(company["업체ID"], "추천 실행", f"실패: {e}", "error")
             yield _sse("error", {"detail": str(e)})
 
     return StreamingResponse(events(), media_type="text/event-stream",
@@ -254,7 +324,7 @@ def _interview_result(thread_id: str) -> dict:
         "rule_counts": [{"rule": RULE_LABELS[r], "desc": RULES[r], "count": n} for r, n in log["rule_counts"].items()],
         "interview": {"answers": prefs["answers"], "weights": prefs["weights"], "base_weights": prefs["base_weights"],
                       "focus": prefs["focus"], "expanded": prefs["expanded"], "exclude": prefs["exclude"],
-                      "note": prefs["note"], "note_effect": prefs["note_effect"]},
+                      "note": prefs["note"], "note_effect": prefs["note_effect"], "master": prefs["master"]},
         "search": state.get("search"),
         "rag_status": state.get("rag_status"),
         "rag_chunk_search": state.get("rag_chunk_search"),
@@ -281,7 +351,9 @@ def make_checklist(body: ChecklistIn):
     rec = next((r for r in recs if r["bidNtceNo"] == body.bidNtceNo), None)
     if rec is None:
         raise HTTPException(400, f"추천 목록에 없는 공고입니다: {body.bidNtceNo}")
-    result = checklist.build(tenders_by_no()[body.bidNtceNo], rec)
+    with _logged(company, "체크리스트", "공고서 확인 항목 작성 시작") as done:
+        result = checklist.build(tenders_by_no()[body.bidNtceNo], rec)
+        done["message"] = f"확인 항목 {len(result['items'])}개 준비"
     CHECKLISTS[(company["업체ID"], body.bidNtceNo)] = result
     return result
 
@@ -296,8 +368,12 @@ def select(body: SelectIn):
     if missing:
         raise HTTPException(400, f"확인하지 않은 항목이 {len(missing)}개 있습니다.")
     try:
-        state = graph.invoke(Command(resume={"bidNtceNo": body.bidNtceNo, "checks": made["items"]}),
-                             _cfg(body.thread_id, company))
+        with _logged(company, "제안서 초안", "공고 확정 · 초안 작성 시작") as done:
+            state = graph.invoke(Command(resume={"bidNtceNo": body.bidNtceNo, "checks": made["items"]}),
+                                 _cfg(body.thread_id, company))
+            ai = bool(state.get("proposal_ai"))
+            done |= {"message": "AI 초안 작성 완료" if ai else "기본 양식 초안 완료 (AI 작성 없음)",
+                     "level": "info" if ai else "warn"}
     except ValueError as e:
         raise HTTPException(400, str(e))
     repo.save_checklist(body.thread_id, body.bidNtceNo, made)
@@ -376,6 +452,7 @@ def _chat_finish(ctx: dict, message: str, result: dict) -> dict:
     """대화 기록에 남기고 변경안을 대기시킨 뒤 화면용 응답으로."""
     ctx["chat"] += [{"role": "user", "text": message}, {"role": "ai", "text": result["reply"]}]
     ctx["pending"] = {e["key"]: e for e in result["edits"]}
+    activity.add(ctx["company"]["업체ID"], "제안서 대화", f"변경안 {len(result['edits'])}개 작성")
     return {"reply": result["reply"], "skipped": result["skipped"],
             "edits": [{k: e[k] for k in ("key", "label", "before", "after", "source", "grounded")} for e in result["edits"]]}
 
@@ -384,6 +461,7 @@ def _chat_finish(ctx: dict, message: str, result: dict) -> dict:
 def proposal_chat_api(body: ChatIn):
     """사용자 요청 → 칸 단위 변경안 (적용 전). 변경안은 서버에 대기시키고 /api/proposal/apply로 고른 것만 반영."""
     ctx, message = _proposal_ctx(body.token, body.thread_id), _chat_message(body)
+    activity.bind(ctx["company"]["업체ID"])
     return _chat_finish(ctx, message, proposal_chat.chat(ctx, message, ctx["chat"]))
 
 
@@ -394,9 +472,10 @@ def proposal_chat_stream(body: ChatIn):
 
     def events():
         try:
-            for ev, data in proposal_chat.chat_steps(ctx, message, ctx["chat"]):
+            for ev, data in activity.bound(ctx["company"]["업체ID"], proposal_chat.chat_steps(ctx, message, ctx["chat"])):
                 yield _sse(ev, _chat_finish(ctx, message, data) if ev == "result" else data)
         except Exception as e:
+            activity.add(ctx["company"]["업체ID"], "제안서 대화", f"실패: {e}", "error")
             yield _sse("error", {"detail": str(e)})
 
     return StreamingResponse(events(), media_type="text/event-stream",
@@ -412,6 +491,7 @@ def proposal_apply(body: ApplyIn):
     ctx["ai"], ctx["criteria"] = proposal_chat.apply(ctx, chosen)
     for e in chosen:
         ctx["pending"].pop(e["key"])
+    activity.add(ctx["company"]["업체ID"], "제안서 대화", f"변경안 {len(chosen)}개 적용")
     html = proposal.assemble_proposal(ctx["company"], ctx["tender"], ctx["criteria"], rec=ctx["rec"],
                                       checks=ctx["checks"], ai=ctx["ai"])
     repo.save_run(body.thread_id, ctx["company"]["업체ID"], "done",

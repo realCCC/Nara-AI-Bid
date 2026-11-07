@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>나라장터 AI 입찰 어시스턴트 PoC</title>
-<meta name="description" content="업체 정보로 나라장터 공고를 추천하고, 공고서 근거와 함께 제안서 초안을 작성하는 AI 입찰 어시스턴트">
+<title>입찰에이전트 PoC</title>
+<meta name="description" content="업체 정보로 나라장터 공고를 추천하고, 공고서 근거와 함께 제안서 초안을 작성하는 입찰에이전트">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Serif+KR:wght@500;700&display=swap" rel="stylesheet">
@@ -48,6 +48,27 @@
   .header-right { display: flex; align-items: center; gap: 10px; margin-left: auto; font-size: 13px; color: var(--sub); }
   .ghost { border: 1px solid var(--line-strong); background: var(--card); border-radius: 8px; padding: 8px 14px; cursor: pointer; font: inherit; font-size: 13px; color: var(--text); }
   .ghost:hover { background: var(--soft); }
+
+  /* 로그 팝업: 화면을 막지 않아 작업하면서 볼 수 있다 */
+  #logPanel { position: fixed; inset: 68px 16px auto auto; z-index: 30; width: min(480px, calc(100vw - 32px)); height: min(560px, calc(100vh - 84px));
+    margin: 0; padding: 0; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--card); color: var(--text);
+    box-shadow: 0 12px 32px rgb(0 0 0 / 0.18); overflow: hidden; }
+  #logPanel[open] { display: flex; flex-direction: column; }
+  .log-head { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  .log-head h2 { margin: 0; font-size: 15px; }
+  .log-head .log-state { margin-right: auto; font-size: 12px; color: var(--faint); }
+  .log-head .ghost { padding: 6px 10px; font-size: 13px; }
+  #logList { flex: 1; min-height: 0; margin: 0; padding: 4px 14px; list-style: none; overflow-y: auto; font-size: 13px; }
+  #logList li { display: grid; grid-template-columns: 62px 1fr; gap: 0 8px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+  #logList li:last-child { border-bottom: 0; }
+  #logList .lt { font-family: var(--mono); font-size: 12px; color: var(--faint); }
+  #logList .lb { min-width: 0; overflow-wrap: anywhere; }
+  #logList .ls { font-weight: 600; margin-right: 6px; }
+  #logList .ls.tech { display: inline-block; padding: 0 6px; border-radius: 6px; background: var(--ai-soft); color: var(--ai-text); font-size: 12px; }
+  #logList .lv { display: inline-block; margin-right: 6px; padding: 0 6px; border-radius: 6px; font-size: 12px; font-weight: 600; }
+  #logList .warn .lv { background: var(--warn-soft); color: var(--warn-text); }
+  #logList .error .lv { background: var(--danger-soft); color: var(--danger); }
+  #logList .log-empty { display: block; padding: 24px 0; border: 0; color: var(--faint); text-align: center; }
 
   /* 탭 (헤더 안) */
   .tabs { display: flex; flex-wrap: wrap; gap: 4px; }
@@ -332,7 +353,7 @@
   <div class="header-inner">
     <div class="brand">
       <span class="logo" aria-hidden="true">나</span>
-      <span class="name"><b>나라장터 입찰 어시스턴트</b><span id="modePill">PoC</span></span>
+      <span class="name"><b>입찰에이전트</b><span id="modePill">PoC</span></span>
     </div>
     <nav class="tabs hidden" id="tabs" aria-label="주요 화면">
       <button data-step="recommend" class="active">맞춤 추천</button>
@@ -342,10 +363,21 @@
     </nav>
     <div class="header-right">
       <span id="headerCompany"></span>
+      <button class="ghost hidden" id="logBtn" aria-expanded="false" aria-controls="logPanel">로그 확인</button>
       <button class="ghost hidden" id="logoutBtn">로그아웃</button>
     </div>
   </div>
 </header>
+
+<dialog id="logPanel" aria-labelledby="logTitle">
+  <div class="log-head">
+    <h2 id="logTitle">실행 로그</h2>
+    <span class="log-state" id="logState"></span>
+    <button class="ghost" id="logClearBtn">지우기</button>
+    <button class="ghost" id="logCloseBtn">닫기</button>
+  </div>
+  <ol id="logList" aria-live="polite"></ol>
+</dialog>
 
 <!-- 1. 로그인 -->
 <section id="loginView">
@@ -472,7 +504,25 @@
         <div id="interviewBody"></div>
         <div class="row" style="justify-content:flex-end; margin-top:16px; gap:8px;">
           <button class="btn" id="skipInterviewBtn">모두 건너뛰기</button>
-          <button class="btn primary" id="submitInterviewBtn">이 조건으로 추천</button>
+          <button class="btn primary" id="submitInterviewBtn">마스터키 후보 보기</button>
+        </div>
+      </div>
+
+      <div class="panel hidden" id="masterCard" style="margin-top:20px; padding:24px;">
+        <div class="row" style="gap:8px; font-size:13px; color:var(--sub);"><span class="kind ai">AI</span>1단계 · 마스터키 <span id="masterSource"></span></div>
+        <h2 style="margin:6px 0 0; font-size:22px;">이번에 가장 원하는 사업은 무엇인가요?</h2>
+        <p class="muted" style="margin:6px 0 0; font-size:14px;">마스터키와 맞는 공고를 가장 먼저 추천합니다. 맞지 않는 공고도 제외하지 않고 뒤에 둡니다.</p>
+        <div class="q" style="border:0; padding:0; margin:0;"><div class="opts" id="masterOptions"></div></div>
+        <div class="row hidden" id="masterCustomRow" style="margin-top:10px; gap:8px;">
+          <input id="masterCustom" aria-label="마스터키 직접 입력" placeholder="예) AI 교육" style="flex:1 1 220px; min-width:0; padding:10px 12px; border-radius:10px; border:1px solid var(--field-line); font:inherit; font-size:14px;">
+          <button class="btn" id="masterWriteBtn">검색 프롬프트 작성</button>
+        </div>
+        <h3 style="margin:18px 0 0; font-size:15px;">검색 프롬프트</h3>
+        <p class="muted" style="margin:4px 0 0; font-size:13px;">업체 역량에 맞춰 자동 작성했습니다. 이 문장 그대로 공고를 찾습니다.</p>
+        <div class="q" style="border:0; padding:0; margin:0;"><textarea id="masterPrompt" rows="3" aria-label="검색 프롬프트"></textarea></div>
+        <div class="row" style="justify-content:space-between; margin-top:16px; gap:8px;">
+          <span class="muted" id="masterCount" style="font-size:13px;"></span>
+          <button class="btn primary" id="confirmMasterBtn">이 프롬프트로 추천 시작</button>
         </div>
       </div>
 
@@ -621,6 +671,7 @@ async function doLogin() {
   $("loginView").classList.add("hidden");
   $("workspace").classList.remove("hidden");
   $("logoutBtn").classList.remove("hidden");
+  $("logBtn").classList.remove("hidden");
   $("tabs").classList.remove("hidden");
   $("headerCompany").innerHTML = `${esc(session.profile.회사명)} · <span class="mono">${esc(session.profile.업체ID)}</span>`;
   enableTab("select");
@@ -649,8 +700,50 @@ function resetRecommend() {
   Object.entries(STAGE_LABELS).forEach(([id, t]) => { $(id).textContent = t; });
 }
 const STAGE_LABELS = { st1Label: "조건 반영", st2Label: "건 통과", st3Label: "건 선별", st5Label: "건", st6Label: "건 재평가" };
+/* ---------- 로그 팝업 ---------- */
+const LOG_LEVEL = { warn: "대체", error: "오류" };
+const LOG_TECH = new Set(["LLM", "RAG", "벡터DB", "임베딩", "리랭크"]);  // 호출 로그는 배지로 구분
+let logLast = 0, logTimer = null, logShown = 0;
+const logEmpty = () => { $("logList").innerHTML = '<li class="log-empty">아직 로그가 없습니다. 기능을 실행하면 여기에 표시됩니다.</li>'; };
+async function pollLogs() {
+  try {
+    const { logs } = await api(withToken(`/api/logs?after=${logLast}`));
+    $("logState").textContent = "2초마다 갱신";
+    if (!logs.length) return;
+    const list = $("logList"), atEnd = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
+    if (!logShown) list.innerHTML = "";
+    list.insertAdjacentHTML("beforeend", logs.map(e => `<li class="${esc(e.level)}"><span class="lt">${esc(e.time)}</span><span class="lb">
+      ${LOG_LEVEL[e.level] ? `<span class="lv">${LOG_LEVEL[e.level]}</span>` : ""}<span class="ls${LOG_TECH.has(e.stage) ? " tech" : ""}">${esc(e.stage)}</span>${esc(e.message)}</span></li>`).join(""));
+    logLast = logs[logs.length - 1].id;
+    logShown += logs.length;
+    if (atEnd) list.scrollTop = list.scrollHeight;
+  } catch (e) {
+    $("logState").textContent = "로그를 불러오지 못했습니다";
+  }
+}
+function closeLogs() {
+  clearInterval(logTimer);
+  logTimer = null;
+  if ($("logPanel").open) $("logPanel").close();
+  $("logBtn").setAttribute("aria-expanded", "false");
+}
+function openLogs() {
+  $("logPanel").show();
+  $("logBtn").setAttribute("aria-expanded", "true");
+  if (!logShown) logEmpty();
+  pollLogs();
+  logTimer = setInterval(pollLogs, 2000);
+}
+$("logBtn").onclick = () => { $("logPanel").open ? closeLogs() : openLogs(); };
+$("logCloseBtn").onclick = closeLogs;
+$("logClearBtn").onclick = () => { logShown = 0; logEmpty(); };
+document.addEventListener("keydown", e => { if (e.key === "Escape" && $("logPanel").open) closeLogs(); });
+
 $("logoutBtn").onclick = () => {
   api(withToken("/api/logout"), { method: "POST" }).catch(() => {});
+  closeLogs();
+  logLast = logShown = 0;
+  $("logBtn").classList.add("hidden");
   session = { token: null, profile: null };
   resetRecommend();
   $("workspace").classList.add("hidden");
@@ -712,7 +805,7 @@ function setStage(id, value, cls) {
 const RAG_LABEL = { llm: "건", rule_only: "룰 순위 (LLM 미연결)", rule_fallback: "룰 순위로 대체", no_candidates: "후보 없음" };
 const MODE_BADGE = { llm: '<span class="tag llm">AI 순위·근거</span>', rule_only: '<span class="tag gray">룰 순위만 (LLM 미연결)</span>',
   rule_fallback: '<span class="tag warn">룰 순위로 대체</span>', no_candidates: '<span class="tag gray">후보 없음</span>' };
-let lastAnswers = {};  // 초안 생성 후 같은 조건으로 새 작업을 만들 때 재사용
+let lastAnswers = {}, lastMaster = { key: "", prompt: "" };  // 초안 생성 후 같은 조건으로 새 작업을 만들 때 재사용
 
 // 추천 시작 → 인터뷰 문항(HITL ⓪)
 async function startRecommend() {
@@ -720,10 +813,14 @@ async function startRecommend() {
   state = { threadId: r.thread_id, recs: [], selected: null, done: false, running: false, result: null };
   return r;
 }
-// 인터뷰 답변 → 추천 결과(HITL ①에서 멈춤). SSE로 받아 단계가 끝날 때마다 onStep(중간 결과)을 부른다
-async function answerInterview(answers, onStep = () => {}) {
-  const res = await fetch("/api/interview/stream", { method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ token: session.token, thread_id: state.threadId, answers }) });
+const postJson = (url, body) => api(url, { method: "POST", headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ token: session.token, thread_id: state.threadId, ...body }) });
+// 인터뷰 답변 → 마스터키 후보와 검색 프롬프트 (담당자 확인에서 멈춤)
+const answerInterview = answers => postJson("/api/interview", { answers });
+// 확인한 마스터키 → 추천 결과(HITL ①에서 멈춤). SSE로 받아 단계가 끝날 때마다 onStep(중간 결과)을 부른다
+async function confirmMaster(master, onStep = () => {}) {
+  const res = await fetch("/api/master/stream", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token: session.token, thread_id: state.threadId, ...master }) });
   if (!res.ok) {
     const d = await res.json().catch(() => ({}));
     throw new Error(d.detail || `요청 실패 (${res.status})`);
@@ -748,7 +845,7 @@ async function answerInterview(answers, onStep = () => {}) {
   state.result = r;
   return r;
 }
-async function runRecommend() { await startRecommend(); return answerInterview(lastAnswers); }
+async function runRecommend() { await startRecommend(); await answerInterview(lastAnswers); return confirmMaster(lastMaster); }
 
 function renderInterview(questions) {
   const opt = (q, o, type) => `<label class="opt"><input type="${type}" name="q_${esc(q.id)}"
@@ -784,6 +881,7 @@ const collectAnswers = () => {
 $("runBtn").onclick = async () => {
   if (state.running) return;
   resetRecommend();
+  $("masterCard").classList.add("hidden");
   state.running = true;
   $("runBtn").disabled = true;
   $("progressText").innerHTML = '<span class="spinner"></span>인터뷰 문항 준비 중';
@@ -793,7 +891,7 @@ $("runBtn").onclick = async () => {
     const ai = r.questions.some(q => q.source === "llm");
     setStage("st1", r.questions.length, "active");
     $("st1Label").textContent = ai ? "개 AI 맞춤 문항" : "개 기본 문항";
-    $("progressText").textContent = "추천 조건을 고른 뒤 [이 조건으로 추천]을 누르세요.";
+    $("progressText").textContent = "추천 조건을 고른 뒤 [마스터키 후보 보기]를 누르세요.";
     $("st1").querySelector(".hint").textContent = "아래 문항에서 추천 조건을 고르세요.";
   } catch (e) {
     $("progressText").textContent = "오류: " + e.message;
@@ -812,9 +910,9 @@ const PROGRESS_STEPS = [  // [이 노드가 끝나면, 진행률, 진행 중인 
   ["rag_recommend", 85, "st5", "검증 에이전트가 상위 후보의 참가 자격을 다시 확인하는 중"],
   ["verify_recommendations", 98, null, "결과 정리 중"],
 ];
-const STAGE_OF = { interview: "st1", filter_and_score: "st2", search: "st3", rerank: "st3", rag_recommend: "st4",
+const STAGE_OF = { review_master: "st1", filter_and_score: "st2", search: "st3", rerank: "st3", rag_recommend: "st4",
                    verify_recommendations: "st5" };  // 스트림 노드 → 단계 (search·rerank는 3단계 안에 둘 다)
-const STAGE_END = ["interview", "filter_and_score", "rerank", "rag_recommend", "verify_recommendations"];  // 단계를 끝내는 노드
+const STAGE_END = ["review_master", "filter_and_score", "rerank", "rag_recommend", "verify_recommendations"];  // 단계를 끝내는 노드
 function showProgress(p, sec) {
   const done = new Set(p.done), info = p.info || {};
   const step = PROGRESS_STEPS.filter(([n]) => !n || done.has(n)).pop();
@@ -855,8 +953,8 @@ function trackStream() {
   const onStep = ev => {
     p.done.push(ev.node);
     const s = sec();
-    if (STAGE_END.includes(ev.node)) {  // 단계 소요 시간 확정 (인터뷰는 답변 해석 시간만이라 표시하지 않음)
-      if (ev.node !== "interview") $(STAGE_OF[ev.node]).querySelector(".t").textContent = `${s - p.since}초 소요`;
+    if (STAGE_END.includes(ev.node)) {  // 단계 소요 시간 확정 (1단계는 담당자 입력 시간이라 표시하지 않음)
+      if (ev.node !== "review_master") $(STAGE_OF[ev.node]).querySelector(".t").textContent = `${s - p.since}초 소요`;
       p.since = s;
     }
     const info = p.info;
@@ -869,16 +967,17 @@ function trackStream() {
   return { onStep, stop: () => clearInterval(id) };
 }
 const LIST_NAMES = { rule: "룰 순위", bm25: "BM25", dense: "의미(dense)", body: "공고서 본문" };
-const QUERY_SOURCE = { llm: "AI 작성", interview: "인터뷰 주력 분야", template: "템플릿" };
+const QUERY_SOURCE = { master: "마스터키 검색 프롬프트", llm: "AI 작성", interview: "인터뷰 주력 분야", template: "템플릿" };
 const briefList = (items, extra) => `<ol>${items.map(t => `<li>${esc(t.bidNtceNm)} ${extra(t)}</li>`).join("")}</ol>`;
 function renderLive(ev, sec) {
   const L = {
-    interview: () => ["ai", `<b>맞춤 인터뷰</b> ${ev.conditions ? `조건 ${ev.conditions}개 반영` : "기본 조건으로 진행"}`, ""],
+    review_master: () => ["ai", `<b>마스터키</b> ${ev.master ? esc(ev.master.key) : "없음"} · ${ev.conditions ? `인터뷰 답 ${ev.conditions}개 반영` : "기본 조건"}`, ""],
     filter_and_score: () => ["", `<b>자격 필터</b> 공고 ${ev.total}건 중 <b>${ev.hard_pass}건</b> 통과`,
       `${ev.keywords.length ? `<div class="muted" style="margin-top:4px;">의미 매칭 키워드 · ${esc(ev.keywords.join(", "))}</div>` : ""}
        <details><summary>룰 점수 상위 ${ev.top.length}건</summary>${briefList(ev.top, t => `<span class="mono">${esc(t.soft_score)}점</span>`)}</details>`],
     search: () => ["ai", `<b>의미 검색</b> ${(ev.lists || []).map(x => esc(LIST_NAMES[x] || x)).join(" + ")} → RRF
-      ${ev.path === "semantic" ? "" : '<span class="tag gray">키워드 검색만</span>'}`,
+      ${ev.path === "semantic" ? "" : '<span class="tag gray">키워드 검색만</span>'}
+      ${ev.master ? `<span class="tag llm">마스터키 일치 ${ev.master.hits}건 우선</span>` : ""}`,
       `<div class="q-text">검색 문장 (${esc(QUERY_SOURCE[ev.query_source] || "-")}) · ${esc(ev.query)}</div>
        <details><summary>RRF 상위 ${ev.top.length}건</summary>${briefList(ev.top, t => `<span class="mono">${fmt(t.rrf, 4)}</span>`)}</details>`],
     rerank: () => ["ai", `<b>리랭크</b> 상위 ${ev.top.length}건 선별 ${ev.rerank === "applied" ? "· 리랭커 적용" : '<span class="tag gray">리랭크 생략</span>'}`,
@@ -899,19 +998,80 @@ function renderLive(ev, sec) {
   if (last) last.open = true;
 }
 
+let masterCands = [];
+const masterPick = () => document.querySelector('input[name="master"]:checked')?.value;
+const masterKey = () => masterPick() === "custom" ? $("masterCustom").value.trim() : masterCands[+masterPick()]?.key || "";
+function updateMaster() {
+  const p = $("masterPrompt");
+  $("masterCount").textContent = `${p.value.length} / ${p.maxLength}자`;
+  $("confirmMasterBtn").disabled = !masterKey() || !p.value.trim();
+  $("masterWriteBtn").disabled = !$("masterCustom").value.trim();
+}
+function syncMaster() {
+  const custom = masterPick() === "custom";
+  $("masterCustomRow").classList.toggle("hidden", !custom);
+  $("masterPrompt").value = custom ? "" : masterCands[+masterPick()].prompt;
+  updateMaster();
+}
+function renderMaster(d) {
+  masterCands = d.candidates;
+  $("masterCustom").maxLength = d.key_max;
+  $("masterCustom").value = "";
+  $("masterPrompt").maxLength = d.prompt_max;
+  const opt = (value, label, hint, checked) => `<label class="opt"><input type="radio" name="master" value="${value}" ${checked ? "checked" : ""}>
+    <span><span class="ol">${esc(label)}</span><span class="oh">${esc(hint)}</span></span></label>`;
+  $("masterOptions").innerHTML = [...masterCands.map((c, i) => opt(i, c.key, c.reason, i === 0)),
+    opt("custom", "직접 입력", "원하는 사업을 적으면 역량에 맞춰 검색 프롬프트를 작성합니다", !masterCands.length)].join("");
+  $("masterOptions").querySelectorAll("input").forEach(i => { i.onchange = syncMaster; });
+  $("masterSource").innerHTML = d.source === "llm" ? '<span class="tag llm">AI 제안</span>' : '<span class="tag gray">역량 키워드 기준</span>';
+  syncMaster();
+  $("masterCard").classList.remove("hidden");
+}
+
 async function submitInterview(answers) {
   if (state.running || !state.threadId) return;
   state.running = true;
   lastAnswers = answers;
   $("interviewCard").classList.add("hidden");
-  const nCond = Object.values(answers).filter(x => x && (!Array.isArray(x) || x.length)).length;
-  setStage("st1", nCond || "", "done");
-  $("st1Label").textContent = nCond ? "개 조건 반영" : "건너뜀 (기본 조건)";
+  setStage("st1", "…", "active");
+  $("st1Label").textContent = "마스터키 후보 작성 중";
+  $("progressText").innerHTML = '<span class="spinner"></span>업체 역량과 인터뷰 답으로 마스터키 후보를 찾는 중';
+  try {
+    renderMaster(await answerInterview(answers));
+    $("st1").querySelector(".num").textContent = "";
+    $("st1Label").textContent = "마스터키 확인 대기";
+    $("progressText").textContent = "마스터키를 고르고 검색 프롬프트를 확인한 뒤 [이 프롬프트로 추천 시작]을 누르세요.";
+  } catch (e) {
+    $("progressText").textContent = "오류: " + e.message;
+    $("runBtn").disabled = false;
+  } finally {
+    state.running = false;
+  }
+}
+
+async function writeMasterPrompt() {
+  const btn = $("masterWriteBtn");
+  btn.disabled = true;
+  try {
+    $("masterPrompt").value = (await postJson("/api/master/prompt", { key: masterKey() })).prompt;
+  } catch (e) {
+    $("progressText").textContent = "오류: " + e.message;
+  }
+  updateMaster();
+}
+
+async function startFromMaster(master) {
+  if (state.running || !state.threadId) return;
+  state.running = true;
+  lastMaster = master;
+  $("masterCard").classList.add("hidden");
+  setStage("st1", "", "done");
+  $("st1Label").textContent = `마스터키 · ${master.key}`;
   setStage("st2", "…", "active");
   showProgress({ done: [], info: {} }, 0);
   const live = trackStream();
   try {
-    const r = await answerInterview(answers, live.onStep);
+    const r = await confirmMaster(master, live.onStep);
     live.stop();
     const f = r.funnel, isLlm = r.rag_status === "llm", s = r.search || {}, v = r.verification;
     setStage("st2", f.hard_pass, "done");
@@ -946,6 +1106,10 @@ async function submitInterview(answers) {
 }
 $("submitInterviewBtn").onclick = () => submitInterview(collectAnswers());
 $("skipInterviewBtn").onclick = () => submitInterview({});
+$("masterPrompt").oninput = updateMaster;
+$("masterCustom").oninput = () => { $("masterPrompt").value = ""; updateMaster(); };
+$("masterWriteBtn").onclick = writeMasterPrompt;
+$("confirmMasterBtn").onclick = () => startFromMaster({ key: masterKey(), prompt: $("masterPrompt").value.trim() });
 
 // 이번 추천에 AI가 쓴 정보 (실행 경로 · 검증 상태 · 인터뷰 반영)
 function renderStatus(r) {
@@ -964,7 +1128,8 @@ function renderStatus(r) {
     row("실행 경로", `${MODE_BADGE[r.rag_status] || esc(r.rag_status)}
       <span class="tag ${s.path === "semantic" ? "ok" : "gray"}">검색 ${s.path === "semantic" ? "의미 검색" : "키워드 검색"}</span>
       <span class="tag ${s.rerank === "applied" ? "ok" : "gray"}">리랭크 ${s.rerank === "applied" ? "적용" : "생략"}</span> ${chunkTag} ${vTag}`),
-    row("검색 문장", `${esc(s.query || "-")} <span class="muted">(${({ llm: "AI 작성", interview: "인터뷰 주력 분야", template: "템플릿" })[s.query_source] || "-"})</span>
+    ...(iv.master ? [row("마스터키", `<span class="pill">${esc(iv.master.key)}</span> <span class="muted">${s.master ? `일치 ${s.master.hits}건 우선` : ""}${iv.master.edited ? " · 프롬프트 담당자 수정" : ""}</span>`)] : []),
+    row("검색 문장", `${esc(s.query || "-")} <span class="muted">(${QUERY_SOURCE[s.query_source] || "-"})</span>
       ${s.path !== "semantic" && s.reason ? `<div class="muted">${esc(s.reason)}</div>` : ""}${s.rerank !== "applied" && s.rerank_reason ? `<div class="muted">리랭크 생략: ${esc(s.rerank_reason)}</div>` : ""}`),
     row("검색 결합", `${(s.lists || []).map(x => `<span class="pill">${esc(LIST_NAMES[x] || x)}</span>`).join("")} <span class="muted">→ RRF${s.rerank === "applied" && SYS.rerank_model ? ` → ${esc(SYS.rerank_model)}` : ""}</span>`),
     row("의미 매칭", sem.used ? `<span class="tag ok">${esc(SYS.embedding_model || "임베딩")}</span> ${esc((sem.keywords || []).join(", "))}` : `<span class="tag gray">문자열 일치만</span> ${esc(sem.reason || "")}`),
@@ -977,7 +1142,7 @@ function renderStatus(r) {
   if (cond.length || ans.length) rows.push(row("인터뷰 조건", cond.join("") + (ans.length ? `<div class="muted">반영한 답 ${ans.length}개</div>` : "")));
   if (iv.note) rows.push(row("직접 입력", `“${esc(iv.note)}” ${iv.note_effect
     ? `<span class="tag llm">AI가 해석</span> <span class="muted">${esc(Object.keys(iv.note_effect).join(", "))}</span>`
-    : '<span class="tag gray">검색 문장에만 반영</span>'}`));
+    : '<span class="tag gray">순위 판단에 반영</span>'}`));
   $("statusRow").innerHTML = `<h4>이번 추천에 AI가 쓴 정보</h4><dl>${rows.join("")}</dl>`;
   $("statusRow").classList.remove("hidden");
   fillSynonyms(sem);

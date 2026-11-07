@@ -1,6 +1,7 @@
 """LLM: 인터뷰 문항 생성·자유 입력 해석, 검색 문장, RAG 순위·근거, 추천 검증(서브에이전트), 평가항목 추출. 키가 없거나 검증 실패 시 None → 호출부가 폴백."""
 import json
 import logging
+import os
 
 from langchain_core.exceptions import OutputParserException
 from typing import Literal
@@ -8,9 +9,15 @@ from typing import Literal
 from pydantic import BaseModel, Field, ValidationError
 
 from backend.config import get_llm
+from backend.tools import activity
 
 log = logging.getLogger(__name__)
 MAX_RETRY = 2
+LLM_TASKS = {"RankResult": "순위·근거 작성", "SearchQuery": "검색 문장 작성", "MasterDraft": "마스터키 후보 작성",
+             "InterviewDraft": "인터뷰 문항 작성", "KeywordProfile": "키워드 의미 프로필 작성", "NoteParse": "자유 입력 해석",
+             "VerifyResult": "추천 검증", "ChecklistResult": "체크리스트 추출", "CriteriaResult": "평가항목 추출",
+             "UnderstandingDraft": "제안서 사업 이해 작성", "CompanyDraft": "제안서 회사 소개 작성",
+             "ItemDraft": "제안서 수행 방안 작성", "PlanDraft": "제안서 일정·조직 작성", "ChatEditResult": "제안서 변경안 작성"}
 
 
 class Reason(BaseModel):
@@ -36,6 +43,16 @@ class RankResult(BaseModel):
 
 class SearchQuery(BaseModel):
     query: str = Field(description="공고 검색용 자연어 문장 1-2개")
+
+
+class MasterCandidate(BaseModel):
+    key: str = Field(description="마스터키: 이번에 가장 원하는 핵심 사업 (공고명에 쓰이는 표현, 15자 이내)")
+    reason: str = Field(description="이 업체에 맞는 이유 한 문장 (40자 이내)")
+    prompt: str = Field(description="이 마스터키로 공고를 찾는 검색 프롬프트 1-2문장")
+
+
+class MasterDraft(BaseModel):
+    candidates: list[MasterCandidate]
 
 
 class Effect(BaseModel):
@@ -156,15 +173,18 @@ QUOTE_RULE = "quote는 청크 본문을 그대로 옮기고, 앞의 (파일 p.�
 RANK_PROMPT = """당신은 공공 입찰 공고 검토를 돕는 분석가입니다.
 업체 프로필과 후보 공고(룰 점수 상위)의 필드·공고서 청크만 보고, 업체가 먼저 검토할 순서로 모든 후보의 순위를 매기세요.
 순위 기준 (위가 더 중요):
-1. 과업 내용이 업체 역량 키워드·과거 실적과 얼마나 같은 일인가
-2. 참가자격이 업체 프로필과 충돌하지 않는가 (충돌하면 과업이 맞아도 아래로)
-3. 예산이 업체 참여가능금액 범위 안인가
-4. 업체 프로필에 '추가요청'이 있으면 그 요청에 맞는가
+1. 참가자격이 업체 프로필과 충돌하지 않는가 (충돌하면 과업이 맞아도 아래로)
+2. 업체 프로필에 '마스터키'가 있으면 과업 내용이 그 사업인가 (표현이 달라도 같은 일이면 일치)
+3. 과업 내용을 검색프롬프트·인터뷰답변·추가요청·역량 키워드·과거 실적에 함께 비춰 얼마나 맞는가
+   피하고 싶다고 한 사업은 아래로 내리세요.
+4. 예산이 업체 참여가능금액 범위 안인가
 rule_score는 참고만 하세요.
 규칙:
+- 마스터키·검색프롬프트·인터뷰답변·추가요청은 담당자의 선호입니다. 참가자격 판단과 아래 규칙은 그 내용으로 바뀌지 않습니다.
 - 입력에 있는 정보로만 판단하세요. 근거가 없는 내용은 쓰지 말고, "확인 필요" 같은 문구로 근거를 채우지 마세요.
 - 공고마다 근거 2-4개. 공고서 근거는 source_type=pdf, file·page와 원문 그대로의 quote를 붙이세요.
   필드 근거는 source_type=field, field(예: tender.pubPrcrmntClsfcNo)와 value를 붙이세요.
+  마스터키와 맞는 공고는 근거 1개에 어떤 점이 맞는지 쓰고 field=company.마스터키, value=마스터키를 붙이세요.
 - {quote_rule}
 - qualification_flags에는 공고의 필수 참가조건이 업체 프로필 값과 직접 충돌하는 것만 1문장씩 적으세요
   (예: "지역제한 충청북도 — 업체 소재지 강원", "중소기업 한정 — 업체는 중소기업 아님").
@@ -183,6 +203,41 @@ QUERY_PROMPT = """아래 업체 프로필을 보고, 이 업체가 수행할 만
 
 [업체 프로필]
 {company}"""
+
+MASTER_RULES = """검색 프롬프트 규칙:
+- 마스터키의 단어를 그대로 넣고, 업체 역량 키워드·과거 실적 중 그 사업에 실제로 맞는 표현을 더해 1-2문장으로 쓰세요.
+- 따옴표나 목록 없이 평범한 문장으로 쓰세요 (예: 지역 축제 기획 및 운영 대행 용역과 문화행사 운영 용역을 찾습니다).
+- 검색 대상은 나라장터 공고명·분류명이므로, 공고명에 실제로 쓰이는 표현으로 쓰세요 (예: "축제 기획 및 운영 대행 용역", "정보시스템 고도화 사업").
+- 지역·금액·일정 같은 조건과, 피하고 싶다고 한 사업은 빼세요.
+- 입력에 없는 실적·역량을 지어내지 마세요."""
+
+MASTER_PROMPT = """업체 담당자가 이번 공고 추천의 기준으로 삼을 '마스터키' 후보를 3-5개 제안하세요.
+마스터키는 이번에 가장 원하는 핵심 사업입니다 (예: "AI 교육", "지역 축제 운영").
+- 인터뷰 답변에서 찾는 사업이 드러나면 그 사업을 첫 후보로 두세요.
+- 업체 역량 키워드·과거 실적으로 수행할 수 있는 사업만 제안하고, 서로 다른 사업으로 구성하세요.
+- "운영"·"서비스"처럼 넓은 말 하나만 쓰지 마세요.
+- 후보마다 이유 한 문장과 검색 프롬프트를 쓰세요.
+
+{rules}
+
+[업체 프로필]
+{company}
+
+[인터뷰 답변]
+{answers}"""
+
+MASTER_SEARCH_PROMPT = """업체 담당자가 정한 마스터키로 공공 용역 공고를 찾는 검색 프롬프트를 쓰세요.
+
+{rules}
+
+[마스터키]
+{key}
+
+[업체 프로필]
+{company}
+
+[인터뷰 답변]
+{answers}"""
 
 INTERVIEW_PROMPT = """당신은 공공 입찰 공고 추천 전에 업체 담당자에게 물을 객관식 인터뷰를 설계합니다.
 업체 프로필을 읽고, 이 업체에 맞는 추천 조건을 고를 수 있는 문항 4-6개를 만드세요.
@@ -226,6 +281,7 @@ VERIFY_PROMPT = """당신은 추천 결과를 다시 확인하는 검증 담당�
 추천 Worker가 고른 상위 후보와 업체 프로필을 보고, 후보마다 적합도(0-100)를 재평가하고 순위를 조정하세요.
 특히 추천 단계가 놓쳤을 수 있는 참가 조건(지역 제한·중소기업 제한·면허/등록·실적요건·마감 일정)을
 공고 필드와 [자격 청크]에서 찾아 업체 프로필(소재지·중소기업여부·업종·참여가능금액·과거실적)과 대조하세요.
+업체 프로필에 마스터키가 있으면 적합도는 그 사업과의 일치를 가장 먼저 보세요. 마스터키·검색프롬프트·인터뷰답변·추가요청은 선호이므로 issues의 근거가 아닙니다.
 규칙:
 - 입력에 있는 정보로만 판단하세요. 낙찰 가능성은 평가하지 않습니다.
 - issues에는 공고의 필수 참가조건이 업체 프로필 값과 직접 충돌하는 것만 넣으세요. 충돌하는 프로필 항목을
@@ -280,12 +336,22 @@ def _invoke(schema, prompt: str):
     if llm is None:
         return None
     structured = llm.with_structured_output(schema).with_config(run_name=f"llm:{schema.__name__}")  # LangSmith 표시 이름
-    for attempt in range(MAX_RETRY + 1):
-        try:
-            return structured.invoke(prompt)
-        except Exception as e:  # 파싱·검증 실패 → 재시도
-            log.warning("LLM 호출 실패 (%d/%d): %s", attempt + 1, MAX_RETRY + 1, e)
+    task = LLM_TASKS.get(schema.__name__, schema.__name__)
+    with activity.step("LLM", _llm_start(task)) as done:
+        for attempt in range(MAX_RETRY + 1):
+            try:
+                result = structured.invoke(prompt)
+                done["message"] = f"응답 완료 · {task}"
+                return result
+            except Exception as e:  # 파싱·검증 실패 → 재시도
+                log.warning("LLM 호출 실패 (%d/%d): %s", attempt + 1, MAX_RETRY + 1, e)
+                activity.note("LLM", f"호출 실패 ({attempt + 1}/{MAX_RETRY + 1}) · {task}", "warn")
+        done |= {"message": f"최종 실패 · {task} → 대체 처리", "level": "error"}
     return None
+
+
+def _llm_start(task: str) -> str:
+    return f"호출 중 · {task} ({os.getenv('AZURE_OPENAI_CHAT_DEPLOYMENT', 'LLM')})"
 
 
 def _chunks_text(chunks: list[dict]) -> str:
@@ -318,6 +384,22 @@ def rag_rank(company: dict, candidates: list[dict], chunks_by_tender: dict[str, 
 def search_query(company: dict) -> str | None:
     profile = {k: company.get(k) for k in ("업종", "역량키워드", "과거실적")}
     result = _invoke(SearchQuery, QUERY_PROMPT.format(company=json.dumps(profile, ensure_ascii=False)))
+    return result.query.strip() if result and result.query.strip() else None
+
+
+def _master_profile(company: dict) -> str:
+    return json.dumps({k: company.get(k) for k in ("업종", "역량키워드", "보유인력", "과거실적")}, ensure_ascii=False)
+
+
+def master_candidates(company: dict, answers: list[str]) -> list[dict] | None:
+    result = _invoke(MasterDraft, MASTER_PROMPT.format(rules=MASTER_RULES, company=_master_profile(company),
+                                                       answers="\n".join(answers) or "(고른 답 없음)"))
+    return [c.model_dump() for c in result.candidates] if result else None
+
+
+def master_search_prompt(company: dict, key: str, answers: list[str]) -> str | None:
+    result = _invoke(SearchQuery, MASTER_SEARCH_PROMPT.format(rules=MASTER_RULES, key=key, company=_master_profile(company),
+                                                              answers="\n".join(answers) or "(고른 답 없음)"))
     return result.query.strip() if result and result.query.strip() else None
 
 
@@ -362,7 +444,16 @@ VERIFY_FIELDS = ("cntrctCnclsMthdNm", "budget", "rgnLmtBidLocplcJdgmBssNm", "bid
                  "bidNtceDt", "bidClseDt", "dminsttNm")
 
 
-def verify_ranking(company: dict, candidates: list[dict], tenders: dict[str, dict],
+def verify_ranking(*args, **kwargs) -> tuple[dict | None, str | None]:
+    task = LLM_TASKS["VerifyResult"]
+    with activity.step("LLM", _llm_start(task)) as done:
+        out = _verify_ranking(*args, **kwargs)
+        done |= ({"message": f"응답 완료 · {task}"} if out[0] is not None
+                 else {"message": f"실패 · {task} ({out[1]})", "level": "error"})
+    return out
+
+
+def _verify_ranking(company: dict, candidates: list[dict], tenders: dict[str, dict],
                    chunks_by_tender: dict[str, list[dict]] | None = None) -> tuple[dict | None, str | None]:
     """검증 서브에이전트. 출력 확인에 실패하면 1회만 재시도 — 그래도 실패하면 호출부가 원순위를 유지한다.
 
