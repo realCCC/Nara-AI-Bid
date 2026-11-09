@@ -145,8 +145,8 @@ def test_apply_verification_demotes_flagged():
     result = _result(["T1", "T2", "T3"])
     result["items"][0]["issues"] = [_issue()]
     recs, v = apply_verification(RECS, result, None, 3, dropped=1)
-    assert [r["bidNtceNo"] for r in recs] == ["T2", "T3", "T1", "T4", "T5", "T6"]
-    assert recs[2]["verify"]["issues"][0]["type"] == "지역제한"
+    assert [r["bidNtceNo"] for r in recs] == ["T2", "T3", "T4", "T5", "T6", "T1"]  # 검증 밖 공고보다도 뒤로
+    assert recs[-1]["verify"]["issues"][0]["type"] == "지역제한" and recs[-1]["rank"] == 6
     assert v["changed"] and v["flagged"] == 1 and v["issues_dropped"] == 1
 
 
@@ -612,3 +612,46 @@ def test_keyword_similarity_uses_profile_texts(monkeypatch):
     monkeypatch.setattr(search, "embed", lambda texts, persist=False: seen.append(list(texts)) or np.ones((len(texts), 2)))
     search.keyword_similarity(["교육", "AI"], {"A": "a"}, texts={"교육": "교육: 교원 연수"})
     assert seen[0] == ["교육: 교원 연수", "AI"]
+
+
+# ---------- 진단용 trace 보강·리랭크 절 분리·검색 문장 고정 ----------
+def test_query_clauses():
+    q = "축제 기획 및 운영 대행 용역, 박람회·전시회 운영 대행 용역\n비즈니스 상담회 운영 용역 관련 표현: 행사, 대행"
+    assert search.query_clauses(q) == [q, "축제 기획 및 운영 대행 용역", "박람회·전시회 운영 대행 용역", "비즈니스 상담회 운영 용역"]
+    assert search.query_clauses("AI 교육 위탁 운영 용역") == ["AI 교육 위탁 운영 용역"]  # 한 절이면 그대로
+
+
+class _ClauseReranker:
+    """'상담회' 절에만 C를 높게 → 전체 문장 점수만 쓰면 놓치는 공고."""
+    def predict(self, pairs):
+        return np.array([0.9 if ("상담회" in q and "상담회" in d) else (0.5 if "축제" in q and "축제" in d else 0.1)
+                         for q, d in pairs])
+
+
+def test_rerank_uses_best_clause_and_records_moves(monkeypatch):
+    import backend.tools.retrieval as retrieval
+
+    docs = {"A": "축제 기획 운영", "B": "도로 포장 공사", "C": "비즈니스 상담회 운영"}
+    monkeypatch.setattr(config, "EMBEDDING_PROVIDER", "bge")
+    monkeypatch.setattr(retrieval, "_bge", lambda: _FakeModel())
+    monkeypatch.setattr(search, "_reranker", lambda: _ClauseReranker())
+    r = search.hybrid_search(docs, "축제 기획 운영 용역, 비즈니스 상담회 운영 용역")
+    ranks = search.rank_table(r)
+    assert set(ranks) == set(docs) and all({"bm25", "dense", "rrf"} <= set(v) for v in ranks.values())
+    rr = search.rerank(r, docs)
+    assert rr["scores"]["C"]["rerank"] == 0.9 and rr["scores"]["A"]["rerank"] == 0.5
+    assert {m["bidNtceNo"] for m in rr["moves"]} == set(docs)
+
+
+def test_llm_query_persisted(monkeypatch, tmp_path):
+    from backend.graphs import recommend
+
+    calls = []
+    monkeypatch.setattr(config, "QUERY_CACHE", tmp_path / "q.json")
+    monkeypatch.setattr(config, "llm_enabled", lambda: True)
+    monkeypatch.setattr(recommend, "_QUERY_CACHE", None)
+    monkeypatch.setattr(recommend.llm, "search_query", lambda c: calls.append(1) or f"질의{len(calls)}")
+    company = {"업체ID": "X", "역량키워드": ["행사"]}
+    assert recommend.make_query(company) == ("질의1", "llm")
+    monkeypatch.setattr(recommend, "_QUERY_CACHE", None)  # 새 프로세스처럼 메모리 캐시 비움 → 파일에서 읽음
+    assert recommend.make_query(company) == ("질의1", "llm") and len(calls) == 1

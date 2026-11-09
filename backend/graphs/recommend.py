@@ -2,6 +2,7 @@
 
 Supervisor가 이 서브그래프 하나를 Worker로 호출한다. 순수 함수(rule_stage 등)는 run_demo·테스트에서도 쓴다.
 """
+import hashlib
 import json
 
 from langgraph.graph import END, START, StateGraph
@@ -33,7 +34,32 @@ def rule_stage(tenders: list[dict], company: dict, region_limits: dict, prefs: d
             "filter_log": {"funnel": result["funnel"], "rule_counts": result["rule_counts"], "excluded": result["excluded"]}}
 
 
-_QUERY_CACHE: dict[str, str] = {}  # 같은 프로필은 같은 문장 → 재실행해도 후보가 바뀌지 않음
+_QUERY_CACHE: dict[str, str] | None = None  # 프로필 해시 → LLM 검색 문장 (QUERY_CACHE 파일에 저장)
+
+
+def _query_cache() -> dict[str, str]:
+    """같은 프로필은 같은 문장. 메모리에만 두면 프로세스마다 LLM이 문장을 새로 만들어 후보가 바뀐다
+    (실측 C001: 두 실행의 문장이 달라 정답 '계양아라온 워터축제'가 2위 → RRF 16위로 빠짐) → 파일에 고정."""
+    global _QUERY_CACHE
+    if _QUERY_CACHE is None:
+        try:
+            _QUERY_CACHE = {k: v["query"] for k, v in json.loads(settings.QUERY_CACHE.read_text(encoding="utf-8")).items()}
+        except (OSError, ValueError, KeyError, TypeError):
+            _QUERY_CACHE = {}
+    return _QUERY_CACHE
+
+
+def _save_query(key: str, company: dict, query: str) -> None:
+    cache = _query_cache()
+    cache[key] = query
+    try:
+        old = json.loads(settings.QUERY_CACHE.read_text(encoding="utf-8")) if settings.QUERY_CACHE.exists() else {}
+        old[key] = {"업체ID": company.get("업체ID"), "query": query}
+        settings.QUERY_CACHE.parent.mkdir(parents=True, exist_ok=True)
+        settings.QUERY_CACHE.write_text(json.dumps(old, ensure_ascii=False, indent=1), encoding="utf-8")
+    except (OSError, ValueError) as e:  # 저장 실패해도 이번 프로세스에서는 메모리 캐시로 고정
+        import logging
+        logging.getLogger(__name__).warning("검색 문장 캐시 저장 실패: %s", e)
 
 
 def make_query(company: dict, prefs: dict | None = None) -> tuple[str, str]:
@@ -50,10 +76,11 @@ def make_query(company: dict, prefs: dict | None = None) -> tuple[str, str]:
         return f"{prefs['focus']['query']} 핵심 키워드: {', '.join(prefs['focus']['keywords'])}{tail}", "interview"
     if not settings.llm_enabled():
         return template_query(company) + tail, "template"
-    key = json.dumps(company, ensure_ascii=False, sort_keys=True)
-    if key not in _QUERY_CACHE and (q := llm.search_query(company)):
-        _QUERY_CACHE[key] = q
-    return (_QUERY_CACHE[key] + tail, "llm") if key in _QUERY_CACHE else (template_query(company) + tail, "template")
+    key = hashlib.sha1(json.dumps(company, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+    cache = _query_cache()
+    if key not in cache and (q := llm.search_query(company)):
+        _save_query(key, company, q)
+    return (cache[key] + tail, "llm") if key in cache else (template_query(company) + tail, "template")
 
 
 def search_stage(candidates: list[dict], tenders: dict[str, dict], company: dict, prefs: dict | None = None) -> dict:
@@ -75,7 +102,7 @@ def rerank_stage(search: dict, candidates: list[dict], tenders: dict[str, dict],
     by_no = {c["bidNtceNo"]: c for c in candidates}
     top = [{**by_no[no], "rank": i, "search": result["scores"][no]} for i, no in enumerate(result["order"][:top_k], 1)]
     meta = {k: result.get(k) for k in ("path", "reason", "query", "query_source", "lists", "rerank", "rerank_reason",
-                                       "semantic", "master")}
+                                       "semantic", "master", "moves")}
     return {"top": top, "search": meta}
 
 

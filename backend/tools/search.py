@@ -7,6 +7,7 @@ BODY_SEARCH=1이면 semantic 경로에서 PDF 본문 순위(pgvector 청크)도 
 import hashlib
 import logging
 import math
+import re
 from collections import Counter
 from functools import lru_cache
 from typing import Protocol
@@ -207,9 +208,17 @@ def body_search(query: str, ids: list[str]) -> list[tuple[str, float]]:
     return sorted(((i, round(v, 4)) for i, v in s.items()), key=lambda x: (-x[1], x[0]))
 
 
+def rank_table(result: dict) -> dict[str, dict[str, int | None]]:
+    """공고마다 단계별 순위 (rule·bm25·dense·body·rrf). 상위 10건 밖에서 놓친 공고도 trace에서 찾을 수 있게."""
+    ranks = result.get("ranks", {})
+    fused = {i: r for r, i in enumerate(result["order"], 1)}
+    return {i: {**{name: ranks[name].get(i) for name in ranks}, "rrf": fused[i]} for i in result["order"]}
+
+
 @traced("hybrid_search", "retriever", big=("docs", "rule_order"),
         outputs=lambda r: {"path": r["path"], "reason": r["reason"], "lists": r["lists"],
-                           "top10": [{"bidNtceNo": i, **r["scores"][i]} for i in r["order"][:10]]})
+                           "top10": [{"bidNtceNo": i, **r["scores"][i]} for i in r["order"][:10]],
+                           "ranks": rank_table(r)})
 def hybrid_search(docs: dict[str, str], query: str, rule_order: list[str] | None = None) -> dict:
     """dense + BM25 (+ 룰 점수 순위)를 RRF로 합친다. 반환 order는 문서 전체, scores는 단계별 점수."""
     scores = {i: {"rule_rank": None, "dense": None, "bm25": None, "body": None, "rrf": None, "rerank": None}
@@ -245,27 +254,46 @@ def hybrid_search(docs: dict[str, str], query: str, rule_order: list[str] | None
         scores[i]["rrf"] = round(s, 5)
     order = sorted(docs, key=lambda i: (-fused.get(i, 0), i))
     return {"path": path, "reason": reason, "query": query, "order": order, "scores": scores,
-            "lists": list(rankings)}
+            "lists": list(rankings),
+            "ranks": {name: {i: r for r, i in enumerate(o, 1)} for name, o in rankings.items()}}
+
+
+def query_clauses(query: str) -> list[str]:
+    """검색 문장을 절(쉼표·줄바꿈) 단위로. 여러 분야를 나열한 문장을 통째로 넣으면 cross-encoder 점수가 첫 절에 쏠린다
+    (실측 C001: '축제…, 박람회…, 심포지엄…, 비즈니스 상담회…' 질의에서 '비즈니스상담회 운영' 공고 0.155 → 해당 절만 0.908).
+    '관련 표현:'·'요청:' 꼬리는 앞 절과 따로 두지 않고 전체 문장도 후보로 남긴다."""
+    parts = [p.strip() for p in re.split(r"[,\n]", query.split(" 관련 표현:")[0].split(" 요청:")[0]) if len(p.strip()) >= 4]
+    return [query] + parts if len(parts) > 1 else [query]
+
+
+def rerank_moves(before: list[str], result: dict, top: int = RERANK_TOP) -> list[dict]:
+    """리랭크 전후 순위 (상위 top건). 리랭크에서 밀린 공고를 trace에서 바로 본다."""
+    after = {i: r for r, i in enumerate(result["order"], 1)}
+    return [{"bidNtceNo": i, "before": r, "after": after[i], "rerank": result["scores"][i]["rerank"]}
+            for r, i in enumerate(before[:top], 1)]
 
 
 @traced("rerank", big=("docs", "result"), outputs=lambda r: {"rerank": r["rerank"], "reason": r["rerank_reason"],
-                                                     "top10": [{"bidNtceNo": i, **r["scores"][i]} for i in r["order"][:10]]})
+                                                     "top10": [{"bidNtceNo": i, **r["scores"][i]} for i in r["order"][:10]],
+                                                     "moves": r.get("moves", [])})
 def rerank(result: dict, docs: dict[str, str], top: int = RERANK_TOP) -> dict:
     """상위 top건만 cross-encoder로 재정렬. semantic이 아니거나 실패하면 생략(순서 유지)."""
     if result["path"] != "semantic":
         return {**result, "rerank": "skipped", "rerank_reason": "keyword_fallback 경로"}
     head = result["order"][:top]
+    clauses = query_clauses(result["query"])
     try:
         with activity.step("리랭크", f"리랭커 실행 중 · 후보 {len(head)}건") as done:
-            raw = _reranker().predict([(result["query"], docs[i]) for i in head]).tolist()
+            raw = _reranker().predict([(q, docs[i]) for i in head for q in clauses]).tolist()
             done["message"] = f"후보 {len(head)}건 재정렬 완료"
     except Exception as e:
         log.warning("리랭크 생략: %s", e)
         return {**result, "rerank": "skipped", "rerank_reason": f"리랭커 실패: {e}"}
-    for i, s in zip(head, raw):
-        result["scores"][i]["rerank"] = round(float(s), 4)
+    for n, i in enumerate(head):  # 공고마다 절별 점수 중 최댓값
+        result["scores"][i]["rerank"] = round(float(max(raw[n * len(clauses):(n + 1) * len(clauses)])), 4)
     # 리랭커 단독 순서는 룰 점수를 무시한다(실측: 룰 57.8점이 3위) → 리랭크 순위와 기존 RRF 순위를 다시 RRF
     by_rr = sorted(head, key=lambda i: -result["scores"][i]["rerank"])
     final = rrf({"rerank": by_rr, "fused": head})
     head = sorted(head, key=lambda i: (-final[i], by_rr.index(i)))
-    return {**result, "order": head + result["order"][top:], "rerank": "applied", "rerank_reason": None}
+    out = {**result, "order": head + result["order"][top:], "rerank": "applied", "rerank_reason": None}
+    return {**out, "moves": rerank_moves(result["order"], out, top)}
