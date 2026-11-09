@@ -2,7 +2,8 @@
 
 추천 단계는 업체 역량 쪽 청크를 보고 순위를 매긴다. 검증은 자격 쪽 청크를 따로 검색해 넘겨,
 앞 단계가 놓친 불충족 조건(issues)을 찾는다. issues는 출처 대조를 통과한 것만 남기고,
-남은 issue가 있는 공고는 상위 N건 안에서 뒤로 보낸다.
+남은 issue가 있는 공고는 검증하지 않은 공고까지 포함한 전체 목록의 맨 뒤로 보낸다.
+(상위 N건 안에서만 뒤로 보내면 확인된 부적격이 상위 5건 자리를 계속 차지했다 — 진단 C005: 지역제한 부적격이 4·5위)
 """
 import json
 import re
@@ -75,7 +76,7 @@ def apply_verification(recs: list[dict], result: dict | None, reason: str | None
                        dropped: int = 0) -> tuple[list[dict], dict]:
     """검증 결과 반영. 실패(result None)면 원순위 그대로 + 사유.
 
-    순서는 LLM이 조정한 order를 따르되, 확인된 issue가 있는 공고는 상위 N건 안에서 뒤로 보낸다.
+    순서는 LLM이 조정한 order를 따르되, 확인된 issue가 있는 공고는 검증 밖 공고(recs[n:])보다도 뒤로 보낸다.
     """
     head = recs[:n]
     if result is None:
@@ -83,10 +84,12 @@ def apply_verification(recs: list[dict], result: dict | None, reason: str | None
                       "flagged": 0, "issues_dropped": 0}
     by_no, items = {c["bidNtceNo"]: c for c in head}, {i["bidNtceNo"]: i for i in result["items"]}
     order = sorted(result["order"], key=lambda no: bool(items[no].get("issues")))  # 안정 정렬: issue 없는 공고 먼저
-    new_head = [{**by_no[no], "verify": {"fit_score": items[no]["fit_score"], "comment": items[no]["comment"],
-                                         "issues": items[no].get("issues", []),
-                                         "rank_before": by_no[no]["rank"]}} for no in order]
-    out = [{**r, "rank": i} for i, r in enumerate(new_head + recs[n:], 1)]
+    checked = {no: {**by_no[no], "verify": {"fit_score": items[no]["fit_score"], "comment": items[no]["comment"],
+                                            "issues": items[no].get("issues", []),
+                                            "rank_before": by_no[no]["rank"]}} for no in order}
+    clean = [checked[no] for no in order if not items[no].get("issues")]
+    flagged_recs = [checked[no] for no in order if items[no].get("issues")]
+    out = [{**r, "rank": i} for i, r in enumerate(clean + recs[n:] + flagged_recs, 1)]
     changed = [c["bidNtceNo"] for c in head] != order
     flagged = sum(bool(items[no].get("issues")) for no in order)
     return out, {"status": "passed", "reason": None, "checked": len(head), "changed": changed,
@@ -94,7 +97,7 @@ def apply_verification(recs: list[dict], result: dict | None, reason: str | None
 
 
 def verify_recommendations(state: ProposalState, config: RunnableConfig):
-    recs, n = state["recommendations"], max(1, min(settings.VERIFY_TOP_N, 5))
+    recs, n = state["recommendations"], max(1, min(settings.VERIFY_TOP_N, 10))
     dropped = 0
     if not settings.llm_enabled():
         result, reason = None, "LLM 키 없음"
