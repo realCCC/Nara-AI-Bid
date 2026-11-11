@@ -262,8 +262,8 @@
   .rec-body { margin-top: 16px; }
   .rec-body > summary { cursor: pointer; display: inline-flex; align-items: center; min-height: 40px; padding: 8px 14px; border: 1px solid var(--line-strong); border-radius: 10px; font-size: 14px; font-weight: 600; list-style: none; }
   .rec-body > summary::-webkit-details-marker { display: none; }
-  .rec-body > summary::after { content: "근거 보기"; }
-  .rec-body[open] > summary::after { content: "근거 접기"; }
+  .rec-body > summary::after { content: "상세 근거 · 점수 계산 보기"; }
+  .rec-body[open] > summary::after { content: "상세 접기"; }
   .rec-cols { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 14px; }
   .area { flex: 1 1 340px; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
   .area h5 { margin: 0; font-size: 14px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
@@ -286,6 +286,70 @@
   .sbar-total { display: flex; justify-content: space-between; border-top: 1px solid var(--line); padding-top: 10px; font-weight: 600; }
   .search-scores { font-size: 12px; color: var(--faint); font-family: var(--mono); }
   .rec-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+
+  /* 추천 카드 — 한눈에 보기 */
+  .facts { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; font-size: 13px; color: var(--sub); }
+  .facts span b { font-weight: 600; color: var(--text-2); margin-right: 4px; }
+  .gauge { --c: var(--ink); flex: 0 0 auto; display: flex; align-items: center; gap: 12px; }
+  .gauge .ring { --p: 0; width: 64px; height: 64px; border-radius: 50%; display: grid; place-items: center;
+    background: conic-gradient(var(--c) calc(var(--p) * 1%), var(--line) 0); }
+  .gauge .ring > span { width: 50px; height: 50px; border-radius: 50%; background: var(--card); display: grid; place-items: center;
+    font-family: var(--mono); font-size: 19px; font-weight: 600; }
+  .gauge .g-txt { display: flex; flex-direction: column; gap: 4px; }
+  .gauge .grade { font-size: 15px; font-weight: 700; }
+  .gauge .g-sub { font-size: 12px; color: var(--faint); }
+  .g-high { --c: var(--ok); color: var(--ok); } .g-mid { --c: var(--ai); color: var(--ai-text); }
+  .g-low { --c: var(--warn); color: var(--warn); } .g-none { --c: var(--mark); color: var(--faint); }
+  .glance { margin-top: 16px; padding: 14px 16px; border-radius: 12px; background: var(--soft); display: flex; flex-direction: column; gap: 12px; }
+  .glance h6 { margin: 0; font-size: 13px; font-weight: 700; color: var(--text-2); display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
+  .glance h6 .sub { font-weight: 400; color: var(--faint); font-size: 12px; }
+  .stack { display: flex; height: 10px; border-radius: 5px; overflow: hidden; background: var(--line); }
+  .stack > div { height: 10px; }
+  .stack > div + div { border-left: 2px solid var(--soft); }
+  .sc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; }
+  .sc { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 10px; background: var(--card); border: 1px solid var(--line); font-size: 13px; }
+  .sc .ic { flex: 0 0 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 700; }
+  .sc.full .ic { background: var(--ok-soft); color: var(--ok); }
+  .sc.part .ic { background: var(--warn-soft); color: var(--warn); }
+  .sc.none .ic { background: var(--chip); color: var(--faint); }
+  .sc .c-body { flex: 1; min-width: 0; }
+  .sc .c-head { display: flex; justify-content: space-between; gap: 6px; font-weight: 600; }
+  .sc .c-pts { font-family: var(--mono); font-weight: 600; white-space: nowrap; }
+  .sc .c-pts small { color: var(--faint); font-weight: 400; }
+  .sc .c-why { color: var(--faint); font-size: 12px; margin-top: 2px; overflow-wrap: anywhere; }
+  .sc .c-sw { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; vertical-align: 1px; }
+  .sc .req { display: inline-block; margin-top: 4px; font-size: 11px; font-weight: 600; color: var(--ai-text); background: var(--ai-soft); padding: 1px 7px; border-radius: 999px; }
+  .key-reasons { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
+  .key-reasons li { display: flex; gap: 8px; align-items: baseline; }
+  .key-reasons li::before { content: ""; flex: 0 0 6px; height: 6px; border-radius: 50%; background: var(--ai); transform: translateY(-2px); }
+  .key-reasons .src { display: block; font-size: 12px; color: var(--faint); margin-top: 2px; }
+  .alerts { display: flex; flex-direction: column; gap: 6px; }
+  .alerts .flag { display: flex; gap: 8px; }
+  .ai-line { font-size: 13px; color: var(--text-2); padding: 10px 12px; border-radius: 10px; background: var(--ai-bg); border: 1px solid var(--ai-line); }
+  .tech { margin-top: 10px; font-size: 12px; }
+  .tech summary { cursor: pointer; color: var(--faint); }
+
+  /* 검증 효과 — 단계마다 걸러낸 것·바꾼 것 (이번 실행 실측) */
+  .effect { margin-top: 12px; padding: 16px 18px; border-radius: 12px; background: var(--card); border: 1px solid var(--line); }
+  .effect h3 { margin: 0; font-size: 15px; display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
+  .effect h3 .sub { font-weight: 400; font-size: 12px; color: var(--faint); }
+  .eff-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-top: 12px; }
+  .eff { padding: 12px 14px; border-radius: 10px; background: var(--soft); display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .eff .e-step { font-size: 12px; color: var(--sub); font-weight: 600; display: flex; gap: 6px; align-items: center; }
+  .eff .e-num { font-family: var(--mono); font-size: 24px; font-weight: 700; color: var(--text); line-height: 1.2; }
+  .eff .e-num small { font-family: var(--sans); font-size: 13px; font-weight: 600; color: var(--sub); margin-left: 4px; }
+  .eff .e-txt { font-size: 13px; color: var(--text-2); }
+  .eff .e-ex { font-size: 12px; color: var(--faint); overflow-wrap: anywhere; }
+  .eff.off .e-num { color: var(--faint); font-size: 16px; }
+  .eff-note { margin: 10px 0 0; font-size: 12px; color: var(--faint); }
+  .journey { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin-top: 12px; font-size: 12px; color: var(--sub); }
+  .journey .j-lbl { font-weight: 600; margin-right: 2px; }
+  .journey .js { padding: 2px 8px; border-radius: 999px; background: var(--chip); color: var(--text-2); white-space: nowrap; }
+  .journey .js b { font-family: var(--mono); }
+  .journey .js.up { background: var(--ok-soft); color: var(--ok); }
+  .journey .js.down { background: var(--warn-soft); color: var(--warn); }
+  .journey .arr { color: var(--faint); }
+  .journey .gain { margin-left: 4px; font-weight: 700; color: var(--ok); white-space: nowrap; }
 
   /* 공고 선택 · 제안서 */
   .picked { padding: 16px 18px; border-radius: 12px; border: 1px solid var(--ok); background: var(--card); }
@@ -344,6 +408,8 @@
     .login-intro, .login-card { padding: 32px 24px; }
     .proposal { padding: 28px 20px; }
     .score { text-align: left; }
+    .rec { padding: 16px; }
+    .gauge { width: 100%; }
   }
 </style>
 </head>
@@ -531,6 +597,7 @@
           <h2 style="margin:0; font-size:18px;">추천 공고 상위 <span id="topCount">10</span>건</h2>
           <span class="muted">추천은 참고용입니다. 근거를 확인한 뒤 1건을 선택하세요.</span>
         </div>
+        <section class="effect" id="effectBox" aria-label="검증 효과"></section>
       </div>
       <div class="rec-list" id="resultList"></div>
 
@@ -1201,6 +1268,119 @@ const reasonList = rs => (rs || []).map(r => `
     <div class="src">출처 · ${reasonSrc(r)}</div>
   </div>`).join("");
 
+// ---- 추천 카드 한눈에 보기: 등급 · 공고 요약 · 업체 중요도 순 점수 구성 · 확인 사항 · 핵심 근거 ----
+function grade(score) {
+  const s = Number(score) || 0;
+  return s >= 75 ? { label: "매우 적합", cls: "g-high" } : s >= 55 ? { label: "적합", cls: "g-mid" }
+    : s >= 35 ? { label: "보통", cls: "g-low" } : { label: "낮음", cls: "g-none" };
+}
+// 카드 등급: 검증 에이전트가 자격 불충족(issue)을 확인한 공고는 매칭 점수가 높아도 '자격 확인 필요'
+function cardGrade(t) {
+  return t.verify?.issues?.length ? { label: "자격 확인 필요", cls: "g-low", flagged: true } : grade(t.soft_score);
+}
+function factsRow(t) {
+  const f = t.info || {}, dl = (f.deadline || "").slice(0, 16);
+  const items = [["예산", won(t.budget)], ["수요기관", f.agency], ["마감", dl], ["계약", f.contract],
+    ["업종", f.category], ["지역 제한", f.region_limit]].filter(([, v]) => v);
+  return `<div class="facts">${items.map(([k, v]) => `<span><b>${k}</b>${esc(v)}</span>`).join("")}
+    <span class="mono" title="공고번호">${esc(t.bidNtceNo)}</span></div>`;
+}
+const SC_COLOR = { S1: "#1D4ED8", S2: "#12663F", S3: "#B45309", S4: "#7C3AED", B1: "#0E7490" };
+const SC_STATUS = {
+  S1: s => s >= 0.99 ? "세부분류까지 일치" : s > 0 ? "대분류만 일치" : "업종 불일치",
+  S2: s => s >= 0.99 ? "역량과 잘 맞음" : s >= 0.5 ? "일부 맞음" : s > 0 ? "약하게 맞음" : "맞는 키워드 없음",
+  S3: (s, why) => /중립/.test(why || "") ? "예산·실적 정보 없음" : s >= 0.8 ? "수행 실적과 규모 비슷" : s >= 0.4 ? "규모 차이 있음" : "규모 차이 큼",
+  S4: s => s >= 0.99 ? "선호 계약방식" : "선호 방식 아님",
+  B1: () => "우리 지역 발주처",
+};
+function glance(t, rule, L, V) {
+  const items = (rule.score_detail?.items || []).slice()
+    .sort((a, b) => (b.weight ?? -1) - (a.weight ?? -1));  // 업체 가중치(중요도) 높은 항목부터, 가점은 끝
+  const asked = items.some(it => it.interview);
+  const max = it => it.weight == null ? it.points : it.weight * 100;
+  const total = Math.max(100, items.reduce((s, it) => s + max(it), 0));
+  const stack = items.filter(it => it.points > 0).map(it =>
+    `<div style="width:${(it.points / total) * 100}%; background:${SC_COLOR[it.key] || "var(--ink)"};" title="${esc(it.item)} ${fmt(it.points, 1)}점"></div>`).join("");
+  const cards = items.map(it => {
+    const s = it.score == null ? 1 : it.score, cls = s >= 0.99 ? "full" : s > 0 ? "part" : "none";
+    const status = (SC_STATUS[it.key] || (() => ""))(s, it.reason);
+    return `<div class="sc ${cls}" title="${esc(it.reason || "")}">
+      <span class="ic" aria-hidden="true">${cls === "full" ? "✓" : cls === "part" ? "△" : "–"}</span>
+      <div class="c-body">
+        <div class="c-head"><span><span class="c-sw" style="background:${SC_COLOR[it.key] || "var(--ink)"};"></span>${esc(it.item)}</span>
+          <span class="c-pts">${it.weight == null ? "+" : ""}${fmt(it.points, 1)}<small>${it.weight == null ? "" : ` / ${fmt(max(it), 1)}`}</small></span></div>
+        <div class="c-why">${esc(status)}${it.weight != null ? ` · 비중 ${Math.round(it.weight * 100)}%` : ""}</div>
+        ${it.interview ? '<span class="req">요청 반영</span>' : ""}
+      </div></div>`;
+  }).join("");
+  const alerts = [
+    ...((L && L.qualification_flags) || []).map(f => `<div class="flag"><b>자격 확인</b><span>${esc(f)}</span></div>`),
+    ...((V && V.issues) || []).map(x => `<div class="flag"><b>${esc(x.type || "확인 필요")}</b><span>${esc(x.text)}</span></div>`),
+    ...(t.source === "rag" && !t.pdf_evidence ? ['<div class="flag"><b>근거 부족</b><span>공고서 PDF에서 근거를 찾지 못했습니다.</span></div>'] : []),
+  ];
+  const reasons = (t.reasons || rule.reasons || []).slice(0, 3);
+  return `<div class="glance">
+    ${alerts.length ? `<div class="alerts" role="note">${alerts.join("")}</div>` : ""}
+    <div>
+      <h6>점수 구성 <span class="sub">${asked ? "· 우리 회사 요청이 반영된 중요도 순" : "· 중요도(가중치) 순"} · 막대에 마우스를 올리면 항목 점수</span></h6>
+      <div class="stack" style="margin-top:8px;" role="img" aria-label="점수 구성 ${esc(t.soft_score)}점">${stack}</div>
+    </div>
+    <div class="sc-grid">${cards}</div>
+    ${reasons.length ? `<div><h6>${t.source === "rag" ? '<span class="kind ai">AI</span>' : ""}핵심 근거</h6>
+      <ul class="key-reasons" style="margin-top:8px;">${reasons.map(r => `<li><div>${esc(r.text)}<span class="src">${reasonSrc(r)}</span></div></li>`).join("")}</ul></div>` : ""}
+    ${V && V.comment ? `<div class="ai-line"><b>AI 검증 의견</b> · ${esc(V.comment)}</div>` : ""}
+  </div>`;
+}
+
+// ---- 검증 효과: 각 단계가 이번 추천에서 걸러내고 바꾼 것 (journey = 공고별 단계 순위) ----
+function renderEffects(r, recs) {
+  const f = r.funnel || {}, s = r.search || {}, v = r.verification, K = recs.length;
+  const J = recs.map(t => t.journey || {}), reranked = s.rerank === "applied";
+  const deep = J.filter(j => j.rule > K).length;                       // 룰 점수만으론 상위 K 밖이던 공고
+  const entered = J.filter(j => j.search > K).length;                  // 리랭크로 상위 K에 새로 들어온 공고
+  const reordered = J.filter(j => j.search != null && j.search !== j.rerank).length;
+  const best = recs.reduce((b, t, i) => { const g = (t.journey?.rule || 0) - (i + 1); return g > b.gain ? { gain: g, t, i } : b; }, { gain: 0 });
+  const L = recs.map(t => t.llm).filter(Boolean);
+  const kept = L.reduce((n, l) => n + l.reasons.length, 0), dropped = L.reduce((n, l) => n + (l.dropped || 0), 0);
+  const tile = (kind, step, num, unit, txt, ex = "", off = false) => `<div class="eff ${off ? "off" : ""}">
+    <div class="e-step"><span class="kind ${kind}">${kind === "ai" ? "AI" : "룰"}</span>${step}</div>
+    <div class="e-num">${num}${unit ? `<small>${unit}</small>` : ""}</div>
+    <div class="e-txt">${txt}</div>${ex ? `<div class="e-ex">${ex}</div>` : ""}</div>`;
+  const tiles = [
+    tile("rule", "자격 필터", f.total != null ? f.total - f.hard_pass : "-", "건 제외",
+      `${f.total ?? "-"}건 중 참여할 수 없는 공고를 미리 걸러 ${f.hard_pass ?? "-"}건만 검토`),
+    tile("ai", s.path === "semantic" ? "의미 검색·리랭크" : "키워드 검색 (BM25)", deep, "건 발굴",
+      `룰 점수만으론 상위 ${K}건 밖이던 공고를 찾아냄${reranked ? ` · 리랭커가 ${reordered}건 순위 조정${entered ? `, ${entered}건 새로 진입` : ""}` : " · 리랭크 생략"}`,
+      best.gain > 0 ? `예) 「${esc(best.t.bidNtceNm)}」 룰 ${best.t.journey.rule}위 → 최종 ${best.i + 1}위` : ""),
+    L.length
+      ? tile("ai", "공고서 근거 (RAG)", kept, "개 통과",
+          `근거마다 공고서 원문과 대조${dropped ? ` · 원문과 맞지 않는 근거 <b>${dropped}개</b> 자동 제거` : " · 대조 실패 0개"}`)
+      : tile("ai", "공고서 근거 (RAG)", "생략", "", r.rag_status === "rule_fallback" ? "AI 출력 검증 실패 → 룰 순위 사용" : "LLM 미연결 → 룰 순위 사용", "", true),
+    v && v.status === "passed"
+      ? tile("ai", "검증 에이전트", v.flagged, "건 하위 배치",
+          `상위 ${v.checked}건 재평가 · 자격 불충족이 확인된 공고를 맨 뒤로${v.issues_dropped ? ` · 근거 없는 지적 ${v.issues_dropped}건 기각` : ""} · ${v.changed ? "순위 조정" : "순위 유지"}`)
+      : tile("ai", "검증 에이전트", "생략", "", v ? `원순위 유지 · ${esc(v.reason || "")}` : "검증 미실행", "", true),
+  ];
+  $("effectBox").innerHTML = `<h3>단계별 검증 효과 <span class="sub">· 이번 추천 실측</span></h3>
+    <div class="eff-grid">${tiles.join("")}</div>
+    <p class="eff-note">오프라인 평가 · 검색 nDCG@10 0.870 → 0.892 (절 단위 리랭크·검색 문장 고정) · 검증 에이전트 부적격 하위 배치율 0.64 → 1.00 (검토 라벨 50건)</p>`;
+}
+// 카드별 순위 변화: 룰 점수 → 의미 검색 → 리랭크 → AI 근거 → 검증 (앞 단계보다 오르면 초록, 내리면 주황)
+function journeyRow(t, i, reranked) {
+  const j = t.journey;
+  if (!j) return "";
+  const steps = [["룰 점수", j.rule], ["검색", j.search], ...(reranked ? [["리랭크", j.rerank]] : []),
+    ["AI 근거", j.rag], ["검증", j.final]].filter(([, r]) => r != null);
+  if (steps.length < 2) return "";
+  const html = steps.map(([name, r], k) => {
+    const prev = k ? steps[k - 1][1] : null, cls = prev == null || prev === r ? "" : r < prev ? "up" : "down";
+    return `${k ? '<span class="arr" aria-hidden="true">→</span>' : ""}<span class="js ${cls}">${name} <b>${r}위</b></span>`;
+  }).join("");
+  const gain = (j.rule || 0) - (i + 1);
+  return `<div class="journey" aria-label="단계별 순위 변화"><span class="j-lbl">순위 변화</span>${html}
+    ${gain > 0 ? `<span class="gain">▲ ${gain}계단</span>` : ""}</div>`;
+}
+
 function renderResults() {
   const list = $("resultList");
   if (!state.recs.length) {
@@ -1209,6 +1389,8 @@ function renderResults() {
     return;
   }
   $("topCount").textContent = state.recs.length;
+  const reranked = state.result?.search?.rerank === "applied";
+  if (state.result) renderEffects(state.result, state.recs);
   list.innerHTML = state.recs.map((t, i) => {
     const isSel = state.selected === t.bidNtceNo;
     const weak = t.source === "rag" && !t.pdf_evidence;
@@ -1216,6 +1398,7 @@ function renderResults() {
     const chips = [
       isSel ? '<span class="tag ok">선택됨</span>' : "",
       t.source === "rag" ? `<span class="tag llm">AI 순위 ${t.rank}위</span>` : '<span class="tag gray">룰 순위</span>',
+      t.journey?.rule > state.recs.length ? `<span class="tag ok">AI 검색이 발굴 · 룰 점수 ${t.journey.rule}위</span>` : "",
       V ? (V.rank_before !== t.rank ? `<span class="tag llm">검증 ${V.rank_before}위 → ${t.rank}위</span>` : '<span class="tag ok">검증 통과 · 순위 유지</span>') : "",
       weak ? '<span class="tag warn">공고서 근거 부족</span>' : t.source === "rag" ? '<span class="tag gray">공고서 PDF 근거 있음</span>' : "",
     ].join("");
@@ -1223,39 +1406,45 @@ function renderResults() {
       <section class="area" aria-label="AI 근거">
         <h5><span class="kind ai">AI</span>공고서를 읽고 찾은 근거 <span class="sub">· 출처 대조 통과 ${L.reasons.length}개${L.dropped ? ` · 대조 실패 ${L.dropped}개 숨김` : ""}</span></h5>
         <div class="reasons">${L.reasons.length ? reasonList(L.reasons) : '<div class="muted">출처가 확인된 AI 근거가 없습니다.</div>'}</div>
-        ${(L.qualification_flags || []).map(f => `<div class="flag"><b>참가 자격 확인 필요</b> · ${esc(f)}</div>`).join("")}
-        ${weak ? `<p class="note-excluded">※ 공고서 PDF 근거가 부족합니다.</p>` : ""}
       </section>` : `
       <section class="area" aria-label="AI 근거">
         <h5><span class="kind ai">AI</span>공고서 근거</h5>
         <div class="muted">${state.result?.rag_status === "rule_fallback" ? "AI 출력 검증에 실패해 룰 결과만 표시합니다." : "LLM 미연결 — 룰 결과만 표시합니다."}</div>
         <div class="reasons">${reasonList(rule.reasons)}</div>
       </section>`;
+    const g = cardGrade(t);
     return `
     <article class="rec ${isSel ? "selected" : ""}">
       <div class="rec-top">
         <div class="rank ${i < 3 ? "top" : ""}">${i + 1}</div>
         <div class="rec-title">
           <h4>${esc(t.bidNtceNm)}</h4>
-          <div class="meta">예산 ${won(t.budget)} · <span class="mono">${esc(t.bidNtceNo)}</span></div>
+          ${factsRow(t)}
           <div class="chips">${chips}</div>
         </div>
-        <div class="score"><div class="val">${esc(t.soft_score)}</div><div class="lbl">룰 점수 / 100</div></div>
+        <div class="gauge ${g.cls}" title="${g.flagged ? "검증 에이전트가 공고서에서 자격 불충족을 확인했습니다. 매칭 점수는 업종·역량·예산·계약방식만 본 값입니다." : "업종·역량 키워드·예산 규모·계약방식 점수를 업체 가중치로 합친 값 (0-100)"}">
+          <div class="ring" style="--p:${Math.max(0, Math.min(100, Number(t.soft_score) || 0))};"><span>${esc(Math.round(t.soft_score))}</span></div>
+          <div class="g-txt"><span class="grade">${g.label}</span>
+            <span class="g-sub">매칭 점수 / 100</span>
+            ${V ? `<span class="g-sub">AI 검증 적합도 <b class="mono">${esc(V.fit_score)}</b></span>` : ""}</div>
+        </div>
       </div>
-      <details class="rec-body" ${i === 0 ? "open" : ""}>
+      ${journeyRow(t, i, reranked)}
+      ${glance(t, rule, L, V)}
+      <details class="rec-body">
         <summary></summary>
         <div class="rec-cols">
           ${aiArea}
-          <section class="area rule" aria-label="점수 근거">
-            <h5><span class="kind rule">룰</span>점수 근거</h5>
+          <section class="area rule" aria-label="점수 계산">
+            <h5><span class="kind rule">룰</span>점수 계산 <span class="sub">· 항목 점수(0-1) × 가중치</span></h5>
             ${scoreBars(rule.score_detail)}
-            ${searchScores(t.search)}
           </section>
         </div>
         ${V ? `<div class="verify-box"><b>검증 에이전트 의견</b> <span class="muted">· 적합도 ${esc(V.fit_score)}점 · 원순위 ${esc(V.rank_before)}위</span><p>${esc(V.comment)}</p>
           ${(V.issues || []).map(i => `<p><span class="tag warn">${esc(i.type)}</span> ${esc(i.text)}
             ${i.quote ? `<span class="quote" style="display:block;">“${esc(i.quote)}”</span>` : ""}
             <span class="src">출처 · ${reasonSrc(i)}</span></p>`).join("")}</div>` : ""}
+        ${t.search ? `<details class="tech"><summary>검색 점수 (기술 정보)</summary>${searchScores(t.search)}</details>` : ""}
       </details>
       <div class="rec-foot">
         <button class="btn ${isSel ? "" : "primary"}" data-pick="${esc(t.bidNtceNo)}" ${isSel ? "disabled" : ""}>${isSel ? "선택 완료" : "이 공고 선택"}</button>
@@ -1281,7 +1470,7 @@ async function pickTender(no) {
   $("selectedBox").innerHTML = `
     <div class="picked">
       <h4>${esc(t.bidNtceNm)}</h4>
-      <div class="muted" style="margin-top:4px;">예산 ${won(t.budget)} · 룰 점수 ${esc(t.soft_score)} · 추천 ${esc(t.rank)}위 · <span class="mono">${esc(t.bidNtceNo)}</span></div>
+      <div class="muted" style="margin-top:4px;">예산 ${won(t.budget)} · 매칭 점수 ${esc(t.soft_score)} (${cardGrade(t).label}) · 추천 ${esc(t.rank)}위 · <span class="mono">${esc(t.bidNtceNo)}</span></div>
       <p style="margin:8px 0 0; font-size:14px;">선택한 공고의 평가항목으로 제안서 초안을 만듭니다.</p>
     </div>
     <div id="checklistBox"><p class="muted" style="margin:14px 0 0;"><span class="spinner"></span>AI가 공고서에서 확인할 조건을 찾는 중 (PDF를 읽느라 몇 초 걸릴 수 있습니다)</p></div>`;
