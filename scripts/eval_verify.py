@@ -147,11 +147,11 @@ def evaluate(runs: int):
                 print(f"[{run}] {cid}: 검증 생략 ({v['reason']})")
                 continue
             head = out["recommendations"][:v["checked"]]
-            flagged = {r["bidNtceNo"] for r in head if r["verify"]["issues"]}
+            flagged = {r["bidNtceNo"] for r in head if r.get("verify", {}).get("issues")}
             rows.append(company_metrics([r["bidNtceNo"] for r in recs[:v["checked"]]], [r["bidNtceNo"] for r in head],
                                         flagged, labels))
             for r in head:
-                for i in r["verify"]["issues"]:
+                for i in r.get("verify", {}).get("issues", []):
                     print(f"[{run}] {cid} {r['bidNtceNo']} ({labels.get(r['bidNtceNo'], '라벨 없음')}) "
                           f"issue[{i['type']}] {i['text']}")
         per_run.append(summarize(rows))

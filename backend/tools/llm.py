@@ -433,11 +433,21 @@ def check_verify(result, ids: list[str]) -> tuple[dict | None, str | None]:
     unknown = sorted({x for x in [*result.order, *(i.bidNtceNo for i in result.items)] if x not in ids})
     if unknown:
         return None, f"없는 공고ID: {', '.join(unknown)}"
-    if len(result.order) != len(ids) or set(result.order) != set(ids):
-        return None, "형식 오류: 조정 순위에 후보 누락·중복"
-    if {i.bidNtceNo for i in result.items} != set(ids):
+    got = {i.bidNtceNo for i in result.items}
+    missing = [i for i in ids if i not in got]
+    if len(missing) * 2 > len(ids):  # 절반 넘게 빠지면 결과 전체를 믿지 않는다
         return None, "형식 오류: 재평가 누락"
-    return result.model_dump(), None
+    if len(result.order) != len(ids) or set(result.order) != set(ids):
+        # 재평가(items)는 전부 있는데 순위 목록만 누락·중복 → 버리지 않고 보정 (실측 C002: 같은 실수로 재시도 2회 모두 실패)
+        # 중복은 처음 나온 자리만, 빠진 공고는 원순위대로 뒤에 붙인다
+        seen = list(dict.fromkeys(result.order))
+        log.warning("검증 순위 보정: 누락 %d건·중복 %d건", len(set(ids) - set(seen)), len(result.order) - len(seen))
+        result.order = seen + [i for i in ids if i not in seen]
+    out = result.model_dump()
+    if missing:  # 일부만 빠지면 받은 재평가는 쓰고, 빠진 공고는 '검증 안 됨'으로 남긴다 (실측 C002)
+        log.warning("검증 재평가 누락 %d건 → 해당 공고는 검증 없이 유지", len(missing))
+        out["unchecked"] = missing
+    return out, None
 
 
 VERIFY_FIELDS = ("cntrctCnclsMthdNm", "budget", "rgnLmtBidLocplcJdgmBssNm", "bidPrtcptLmtYn", "pubPrcrmntClsfcNo",
