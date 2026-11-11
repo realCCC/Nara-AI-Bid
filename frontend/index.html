@@ -1358,7 +1358,7 @@ function renderEffects(r, recs) {
       : tile("ai", "공고서 근거 (RAG)", "생략", "", r.rag_status === "rule_fallback" ? "AI 출력 검증 실패 → 룰 순위 사용" : "LLM 미연결 → 룰 순위 사용", "", true),
     v && v.status === "passed"
       ? tile("ai", "검증 에이전트", v.flagged, "건 하위 배치",
-          `상위 ${v.checked}건 재평가 · 자격 불충족이 확인된 공고를 맨 뒤로${v.issues_dropped ? ` · 근거 없는 지적 ${v.issues_dropped}건 기각` : ""} · ${v.changed ? "순위 조정" : "순위 유지"}`)
+          `상위 ${v.checked - (v.unchecked || 0)}건 재평가${v.unchecked ? ` (응답 누락 ${v.unchecked}건은 검증 없이 유지)` : ""} · 자격 불충족이 확인된 공고를 맨 뒤로${v.issues_dropped ? ` · 근거 없는 지적 ${v.issues_dropped}건 기각` : ""} · ${v.changed ? "순위 조정" : "순위 유지"}`)
       : tile("ai", "검증 에이전트", "생략", "", v ? `원순위 유지 · ${esc(v.reason || "")}` : "검증 미실행", "", true),
   ];
   $("effectBox").innerHTML = `<h3>단계별 검증 효과 <span class="sub">· 이번 추천 실측</span></h3>

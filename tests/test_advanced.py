@@ -88,8 +88,23 @@ def test_check_verify_failures():
     assert llm.check_verify(None, IDS)[1].startswith("형식 오류")
     assert llm.check_verify({"order": IDS}, IDS)[1].startswith("형식 오류")
     assert llm.check_verify(_result(["T1", "T2", "T9"]), IDS)[1] == "없는 공고ID: T9"
-    assert "누락" in llm.check_verify(_result(["T1", "T2"]), IDS)[1]
+    assert "누락" in llm.check_verify(_result(["T1"]), IDS)[1]  # 재평가가 절반 넘게 빠지면 실패
     assert llm.check_verify(_result(["T3", "T1", "T2"]), IDS) == (_result(["T3", "T1", "T2"]), None)
+
+
+def test_check_verify_repairs_order():
+    """재평가는 전부 있고 순위만 누락·중복이면 보정: 중복은 첫 자리만, 빠진 공고는 원순위대로 뒤에."""
+    out, reason = llm.check_verify(_result(["T3", "T3", "T1"], items=IDS), IDS)
+    assert reason is None and out["order"] == ["T3", "T1", "T2"] and "unchecked" not in out
+
+
+def test_partial_verification_keeps_unchecked():
+    """재평가가 일부만 빠지면 받은 것만 반영하고, 빠진 공고는 verify 없이 남긴다."""
+    out, reason = llm.check_verify(_result(["T2", "T1"]), IDS)
+    assert reason is None and out["order"] == ["T2", "T1", "T3"] and out["unchecked"] == ["T3"]
+    recs, v = apply_verification(RECS, out, None, 3)
+    assert [r["bidNtceNo"] for r in recs[:3]] == ["T2", "T1", "T3"] and "verify" not in recs[2]
+    assert v["status"] == "passed" and v["unchecked"] == 1
 
 
 def test_apply_verification_keeps_order_on_failure():

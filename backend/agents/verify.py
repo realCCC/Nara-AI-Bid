@@ -77,24 +77,27 @@ def apply_verification(recs: list[dict], result: dict | None, reason: str | None
     """검증 결과 반영. 실패(result None)면 원순위 그대로 + 사유.
 
     순서는 LLM이 조정한 order를 따르되, 확인된 issue가 있는 공고는 검증 밖 공고(recs[n:])보다도 뒤로 보낸다.
+    LLM이 재평가를 일부 빠뜨린 공고(result["unchecked"])는 verify 없이 그 자리에 둔다.
     """
     head = recs[:n]
     if result is None:
         return recs, {"status": "skipped", "reason": reason, "checked": len(head), "changed": False,
                       "flagged": 0, "issues_dropped": 0}
     by_no, items = {c["bidNtceNo"]: c for c in head}, {i["bidNtceNo"]: i for i in result["items"]}
-    order = sorted(result["order"], key=lambda no: bool(items[no].get("issues")))  # 안정 정렬: issue 없는 공고 먼저
+    has_issue = lambda no: bool(items.get(no, {}).get("issues"))  # noqa: E731
+    order = sorted(result["order"], key=has_issue)  # 안정 정렬: issue 없는 공고 먼저
     checked = {no: {**by_no[no], "verify": {"fit_score": items[no]["fit_score"], "comment": items[no]["comment"],
                                             "issues": items[no].get("issues", []),
-                                            "rank_before": by_no[no]["rank"]}} for no in order}
-    clean = [checked[no] for no in order if not items[no].get("issues")]
-    flagged_recs = [checked[no] for no in order if items[no].get("issues")]
+                                            "rank_before": by_no[no]["rank"]}} if no in items else by_no[no]
+               for no in order}
+    clean = [checked[no] for no in order if not has_issue(no)]
+    flagged_recs = [checked[no] for no in order if has_issue(no)]
     out = [{**r, "rank": i, "journey": {**r.get("journey", {}), "final": i}}
            for i, r in enumerate(clean + recs[n:] + flagged_recs, 1)]
     changed = [c["bidNtceNo"] for c in head] != order
-    flagged = sum(bool(items[no].get("issues")) for no in order)
+    flagged = sum(has_issue(no) for no in order)
     return out, {"status": "passed", "reason": None, "checked": len(head), "changed": changed,
-                 "flagged": flagged, "issues_dropped": dropped}
+                 "flagged": flagged, "issues_dropped": dropped, "unchecked": len(result.get("unchecked", []))}
 
 
 def verify_recommendations(state: ProposalState, config: RunnableConfig):
