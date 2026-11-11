@@ -2,7 +2,7 @@
 
 선택지마다 effect(정해진 효과 어휘)를 붙이고, 코드가 effect만 검증·적용한다. LLM이 없거나 출력이 검증을 못 넘으면 기본 문항.
 마지막 문항은 자유 입력(note): LLM이 같은 effect로 해석한다(있으면 선택 답보다 우선).
-인터뷰 뒤에는 마스터키(이번에 가장 원하는 핵심 사업)와 역량 맞춤 검색 프롬프트를 담당자가 확인하고, 그 값이 검색·순위·검증의 최우선 기준이 된다.
+인터뷰 뒤에는 핵심 사업(이번에 가장 원하는 사업)과 역량 맞춤 검색 프롬프트를 담당자가 확인하고, 그 값이 검색·순위·검증의 최우선 기준이 된다.
 답이 없거나 "all"이면 기본값.
 """
 import json
@@ -278,13 +278,13 @@ def clean_master_prompt(text) -> str:
 
 
 def template_master_prompt(company: dict, key: str) -> str:
-    """LLM 없음·실패: 마스터키 + 역량 키워드 (지어낼 여지가 없다)."""
+    """LLM 없음·실패: 핵심 사업 + 역량 키워드 (지어낼 여지가 없다)."""
     keywords = [k for k in company.get("역량키워드", []) if k not in _BROAD][:4]
     return clean_master_prompt(f"{key} 관련 공공 용역 사업" + (f" 역량: {', '.join(keywords)}" if keywords else ""))
 
 
 def _anchored(key: str, prompt: str) -> str:
-    """검색 프롬프트에 마스터키의 핵심 단어가 빠지면 키를 앞에 붙인다 (마스터키가 검색 중심이어야 한다)."""
+    """검색 프롬프트에 핵심 사업의 주요 단어가 빠지면 키를 앞에 붙인다 (핵심 사업이 검색 중심이어야 한다)."""
     return prompt if all(w in prompt for w in key.split() if w not in _BROAD) else clean_master_prompt(f"{key} {prompt}")
 
 
@@ -307,7 +307,7 @@ def _fallback_masters(company: dict, prefs: dict) -> list[dict]:
 
 
 def build_masters(company: dict, questions: list[dict], prefs: dict) -> dict:
-    """업체 역량 + 인터뷰 답변 → 마스터키 후보와 후보별 검색 프롬프트. source: llm | template."""
+    """업체 역량 + 인터뷰 답변 → 핵심 사업 후보와 후보별 검색 프롬프트. source: llm | template."""
     if config.llm_enabled():
         from backend.tools import llm
 
@@ -318,7 +318,7 @@ def build_masters(company: dict, questions: list[dict], prefs: dict) -> dict:
 
 
 def master_prompt(company: dict, key: str, answers: list[str]) -> str:
-    """담당자가 직접 적은 마스터키 → 역량에 맞춘 검색 프롬프트."""
+    """담당자가 직접 적은 핵심 사업 → 역량에 맞춘 검색 프롬프트."""
     prompt = ""
     if config.llm_enabled():
         from backend.tools import llm
@@ -328,7 +328,7 @@ def master_prompt(company: dict, key: str, answers: list[str]) -> str:
 
 
 def resolve_master(draft: dict, picked: dict | None, company: dict) -> dict | None:
-    """담당자 확인 값 → 확정 마스터키. 비우면 첫 후보, 후보도 없으면 None (기존 검색 경로)."""
+    """담당자 확인 값 → 확정 핵심 사업. 비우면 첫 후보, 후보도 없으면 None (기존 검색 경로)."""
     picked, cands = picked or {}, draft["candidates"]
     key = clean_master_key(picked.get("key")) or (cands[0]["key"] if cands else "")
     if not key:
@@ -340,17 +340,17 @@ def resolve_master(draft: dict, picked: dict | None, company: dict) -> dict | No
 
 
 def with_master(prefs: dict, master: dict | None, lines: list[str]) -> dict:
-    """확정 마스터키를 prefs에 넣는다. 공백 없는 키는 S2 문자열 일치·PDF 청크 검색에도 쓴다."""
+    """확정 핵심 사업을 prefs에 넣는다. 공백 없는 키는 S2 문자열 일치·PDF 청크 검색에도 쓴다."""
     term = _term(master["key"]) if master else None
     expanded = [*prefs["expanded"], {"term": term, "group": NOTE_GROUP}] if term else prefs["expanded"]
     return {**prefs, "master": master, "answer_lines": lines, "expanded": expanded}
 
 
 def with_note(company: dict, prefs: dict | None) -> dict:
-    """LLM 판단(RAG 순위·검증)용 프로필: 확정 마스터키·검색 프롬프트, 고른 답, 자유 입력 원문을 붙인다."""
+    """LLM 판단(RAG 순위·검증)용 프로필: 확정 핵심 사업·검색 프롬프트, 고른 답, 자유 입력 원문을 붙인다."""
     prefs, extra = prefs or {}, {}
     if master := prefs.get("master"):
-        extra |= {"마스터키": master["key"], "검색프롬프트": master["prompt"]}
+        extra |= {"핵심사업": master["key"], "검색프롬프트": master["prompt"]}
     if prefs.get("answer_lines"):
         extra["인터뷰답변"] = prefs["answer_lines"]
     if prefs.get("note"):

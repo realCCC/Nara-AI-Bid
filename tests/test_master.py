@@ -1,4 +1,4 @@
-"""마스터키: 후보 → 담당자 확인 → 검색 문장·순서·LLM 판단 프로필."""
+"""핵심 사업: 후보 → 담당자 확인 → 검색 문장·순서·LLM 판단 프로필."""
 from backend import config
 from backend.graphs import recommend
 from backend.tools import interview, llm, search
@@ -25,7 +25,7 @@ def test_llm_candidates_are_cleaned_and_anchored(monkeypatch):
         {"key": "연수", "reason": "r", "prompt": "직무 연수 용역"}])
     d = interview.build_masters(COMPANY, interview.QUESTIONS, to_prefs({}))
     assert d["source"] == "llm" and [c["key"] for c in d["candidates"]] == ["AI 교육", "연수"]
-    assert d["candidates"][0]["prompt"] == "AI 교육 인공지능 강의 용역"  # 프롬프트에 빠진 마스터키는 붙인다
+    assert d["candidates"][0]["prompt"] == "AI 교육 인공지능 강의 용역"  # 프롬프트에 빠진 핵심 사업은 붙인다
 
     monkeypatch.setattr(llm, "master_candidates", lambda c, a: None)  # LLM 실패 → 역량 키워드 후보
     assert interview.build_masters(COMPANY, interview.QUESTIONS, to_prefs({}))["source"] == "template"
@@ -47,7 +47,7 @@ def test_master_drives_query_and_llm_profile():
     assert recommend.make_query(COMPANY, prefs) == ("AI 교육 위탁 운영 용역", "master")
     assert {"term": "AI교육", "group": interview.NOTE_GROUP} in prefs["expanded"]  # S2·청크 검색에도
     profile = interview.with_note(COMPANY, prefs)
-    assert profile["마스터키"] == "AI 교육" and profile["인터뷰답변"] == ["사업 규모: 1억 원 미만"]
+    assert profile["핵심사업"] == "AI 교육" and profile["인터뷰답변"] == ["사업 규모: 1억 원 미만"]
     assert recommend.make_query(COMPANY, interview.with_master(to_prefs({}), None, []))[1] == "template"  # 키 없음 → 기존 경로
 
 
@@ -71,4 +71,6 @@ def test_rerank_keeps_master_first(monkeypatch):
     found = {"order": ["B", "A"], "scores": {"A": {}, "B": {}}, "path": "semantic", "master": {"key": "AI 교육", "hits": 1}}
     out = recommend.rerank_stage(found, cands, tenders, top_k=2)
     assert [t["bidNtceNo"] for t in out["top"]] == ["B", "A"] and out["search"]["master"]["hits"] == 1
-    assert out["top"][1]["journey"] == {"rule": None, "search": 2, "rerank": 2}  # 단계별 순위 (화면 순위 변화 표시용)
+    j = out["top"][1]["journey"]
+    assert {k: j[k] for k in ("rule", "search", "rerank")} == {"rule": None, "search": 2, "rerank": 2}  # 단계별 순위
+    assert out["top"][0]["journey"]["why"]["master"] and not j["why"]["master"]  # 순위 변동 근거: 핵심 사업 일치

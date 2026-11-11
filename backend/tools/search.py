@@ -31,7 +31,7 @@ def tender_doc(tender: dict) -> str:
 
 
 def master_match(key: str, doc: str) -> bool:
-    """마스터키가 공고 문서에 있는가: 붙여 쓴 문자열 일치, 또는 일반어를 뺀 키의 명사가 모두 있음
+    """핵심 사업이 공고 문서에 있는가: 붙여 쓴 문자열 일치, 또는 일반어를 뺀 키의 명사가 모두 있음
     ('AI 교육' ↔ 'AI 활용 교육', '지역 축제 운영' ↔ '한마음축제 기획')."""
     if key.replace(" ", "").lower() in doc.replace(" ", "").lower():
         return True
@@ -40,7 +40,7 @@ def master_match(key: str, doc: str) -> bool:
 
 
 def master_first(result: dict, docs: dict[str, str], key: str) -> dict:
-    """마스터키 일치 공고를 앞으로 (제외는 없다). 일치끼리·나머지끼리는 기존 순서를 지켜 역량·의미 순위를 유지한다."""
+    """핵심 사업 일치 공고를 앞으로 (제외는 없다). 일치끼리·나머지끼리는 기존 순서를 지켜 역량·의미 순위를 유지한다."""
     hits = [i for i in result["order"] if master_match(key, docs[i])]
     rest = [i for i in result["order"] if i not in set(hits)]
     return {**result, "order": [*hits, *rest], "master": {"key": key, "hits": len(hits)}}
