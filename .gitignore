@@ -12,3 +12,6 @@ data/app.db
 outputs/
 # 임베딩 캐시(data/emb_cache.npz 공고 벡터)는 커밋한다. 공고서 청크 벡터는 pgvector(Docker 볼륨)에만 있음
 # → 다른 PC에서 공고 벡터를 다시 계산하지 않음 (청킹이나 EMBEDDING_MODEL이 바뀌면 다시 계산됨)
+
+# Claude Code 프로젝트 지침 (로컬 전용)
+.claude/CLAUDE.md
