@@ -100,7 +100,11 @@ def rerank_stage(search: dict, candidates: list[dict], tenders: dict[str, dict],
     if candidates and search.get("master"):  # 리랭커가 섞어도 마스터키 일치 공고가 앞에 오게
         result = master_first(result, docs, search["master"]["key"])
     by_no = {c["bidNtceNo"]: c for c in candidates}
-    top = [{**by_no[no], "rank": i, "search": result["scores"][no]} for i, no in enumerate(result["order"][:top_k], 1)]
+    pre = {no: r for r, no in enumerate(search.get("order", []), 1)}  # 리랭크 전(하이브리드 검색) 순위
+    # journey: 단계별 순위 (룰 점수 → 하이브리드 검색 → 리랭크). RAG·검증 단계가 이어서 채운다 → 화면에서 단계 효과를 보여 준다
+    top = [{**by_no[no], "rank": i, "search": result["scores"][no],
+            "journey": {"rule": result["scores"][no].get("rule_rank"), "search": pre.get(no), "rerank": i}}
+           for i, no in enumerate(result["order"][:top_k], 1)]
     meta = {k: result.get(k) for k in ("path", "reason", "query", "query_source", "lists", "rerank", "rerank_reason",
                                        "semantic", "master", "moves")}
     return {"top": top, "search": meta}

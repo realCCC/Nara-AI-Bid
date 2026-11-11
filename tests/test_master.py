@@ -71,3 +71,4 @@ def test_rerank_keeps_master_first(monkeypatch):
     found = {"order": ["B", "A"], "scores": {"A": {}, "B": {}}, "path": "semantic", "master": {"key": "AI 교육", "hits": 1}}
     out = recommend.rerank_stage(found, cands, tenders, top_k=2)
     assert [t["bidNtceNo"] for t in out["top"]] == ["B", "A"] and out["search"]["master"]["hits"] == 1
+    assert out["top"][1]["journey"] == {"rule": None, "search": 2, "rerank": 2}  # 단계별 순위 (화면 순위 변화 표시용)

@@ -89,7 +89,8 @@ def apply_verification(recs: list[dict], result: dict | None, reason: str | None
                                             "rank_before": by_no[no]["rank"]}} for no in order}
     clean = [checked[no] for no in order if not items[no].get("issues")]
     flagged_recs = [checked[no] for no in order if items[no].get("issues")]
-    out = [{**r, "rank": i} for i, r in enumerate(clean + recs[n:] + flagged_recs, 1)]
+    out = [{**r, "rank": i, "journey": {**r.get("journey", {}), "final": i}}
+           for i, r in enumerate(clean + recs[n:] + flagged_recs, 1)]
     changed = [c["bidNtceNo"] for c in head] != order
     flagged = sum(bool(items[no].get("issues")) for no in order)
     return out, {"status": "passed", "reason": None, "checked": len(head), "changed": changed,

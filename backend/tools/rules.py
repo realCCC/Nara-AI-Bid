@@ -154,6 +154,13 @@ def rule_reasons(tender: dict, company: dict, score: dict) -> list[dict]:
     return reasons
 
 
+def tender_info(tender: dict) -> dict:
+    """추천 카드 상단에 보여 줄 공고 요약 (수요기관·마감·계약방식·업종·지역 제한)."""
+    return {"agency": tender.get("dminsttNm") or tender.get("ntceInsttNm") or "",
+            "deadline": tender.get("bidClseDt") or "", "contract": tender.get("cntrctCnclsMthdNm") or "",
+            "category": tender.get("pubPrcrmntClsfcNm") or "", "region_limit": tender.get("rgnLmtBidLocplcJdgmBssNm") or ""}
+
+
 def recommend_by_rules(tenders: list[dict], company: dict, region_limits: dict, top_k: int | None = None,
                        prefs: dict | None = None, semantic: dict[str, dict] | None = None) -> dict:
     """500건 → 하드 필터 → 소프트 점수 상위 K건. 화면 퍼널 숫자와 제외 사유 집계도 함께 돌려준다.
@@ -186,7 +193,7 @@ def recommend_by_rules(tenders: list[dict], company: dict, region_limits: dict, 
         "rank": i + 1, "bidNtceNo": t["bidNtceNo"], "bidNtceNm": t.get("bidNtceNm", ""),
         "budget": t.get("budget"), "soft_score": s["total"], "scores": {k: s[k] for k in ("S1", "S2", "S3", "S4")},
         "score_detail": {"items": items, "total": s["total"]},
-        "reasons": rule_reasons(t, company, s), "source": "rule",
+        "reasons": rule_reasons(t, company, s), "source": "rule", "info": tender_info(t),
     } for i, (t, s, items) in enumerate(scored[:top_k])]
 
     # 퍼널·집계: 규칙마다 걸린 공고 수 (한 공고가 여러 규칙에 걸리면 각각 집계)

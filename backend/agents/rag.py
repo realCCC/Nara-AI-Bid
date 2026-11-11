@@ -46,7 +46,7 @@ def rag_recommend(state: ProposalState):
         shown = list(llm_reasons)
         if len(shown) < 2:  # 출처 확인된 근거가 2개 미만이면 룰 근거 보충
             shown += rule_reasons(t, company, soft_score(t, company))[: 3 - len(shown)]
-        out.append({**base, "rank": i, "reasons": shown, "source": "rag",
+        out.append({**base, "rank": i, "reasons": shown, "source": "rag", "journey": {**base.get("journey", {}), "rag": i},
                     "qualification_flags": r.get("qualification_flags", []),
                     "pdf_evidence": bool(chunks[r["bidNtceNo"]]),
                     "llm": {"rank": i, "reasons": llm_reasons, "dropped": len(r["reasons"]) - len(llm_reasons),

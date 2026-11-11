@@ -103,6 +103,7 @@ def test_apply_verification_reorders_head_only():
     assert [r["bidNtceNo"] for r in recs] == ["T3", "T1", "T2", "T4", "T5", "T6"]
     assert [r["rank"] for r in recs] == [1, 2, 3, 4, 5, 6]
     assert recs[0]["verify"]["rank_before"] == 3 and "verify" not in recs[3]
+    assert recs[0]["journey"]["final"] == 1 and recs[3]["journey"]["final"] == 4
     assert v["status"] == "passed" and v["changed"]
 
 
