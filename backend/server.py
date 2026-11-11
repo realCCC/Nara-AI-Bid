@@ -132,7 +132,9 @@ def _step_event(node: str, update) -> dict | None:
     if node == "rerank":
         return {"node": node, "rerank": update["search"].get("rerank"), "top": _brief(update["top10"])}
     if node == "rag_recommend":
-        return {"node": node, "rag_status": update["rag_status"], "top": _brief(update["recommendations"])}
+        critique = (update.get("verify_loop") or {}).get("critique")  # 5단계 불통과로 돌아온 재순위
+        return {"node": node, "rag_status": update["rag_status"], "top": _brief(update["recommendations"]),
+                "retry": {"attempt": critique["attempt"], "reasons": critique["reasons"]} if critique else None}
     if node == "verify_recommendations":
         return {"node": node, "verification": update["verification"], "top": _brief(update["recommendations"])}
     return None
@@ -242,12 +244,12 @@ def _check_interview(body: InterviewIn) -> dict:
 def _check_master(body: MasterPromptIn) -> dict:
     company = _owned(body.token, body.thread_id)
     if graph.get_state(_cfg(body.thread_id)).next != ("review_master",):
-        raise HTTPException(409, "이미 확인한 마스터키입니다. 추천을 다시 실행하세요.")
+        raise HTTPException(409, "이미 확인한 핵심 사업입니다. 추천을 다시 실행하세요.")
     return company
 
 
 def _resume_master(body: MasterIn, company: dict) -> Iterator[tuple[str, dict]]:
-    """확인한 마스터키로 재개 → 추천 Worker·RAG·검증 → HITL ①에서 멈춤. 노드가 끝날 때마다 (노드, 갱신값)을 낸다."""
+    """확인한 핵심 사업으로 재개 → 추천 Worker·RAG·검증 → HITL ①에서 멈춤. 노드가 끝날 때마다 (노드, 갱신값)을 낸다."""
     PROGRESS[body.thread_id] = {"company": company["업체ID"], "done": [], "info": {}}
     activity.add(company["업체ID"], "추천 실행", "추천 시작")
     t0 = last = time.perf_counter()
@@ -269,9 +271,9 @@ def _resume_master(body: MasterIn, company: dict) -> Iterator[tuple[str, dict]]:
 
 @app.post("/api/interview")
 def answer_interview(body: InterviewIn):
-    """인터뷰 답변 → 마스터키 후보·검색 프롬프트를 만들고 담당자 확인에서 멈춘다."""
+    """인터뷰 답변 → 핵심 사업 후보·검색 프롬프트를 만들고 담당자 확인에서 멈춘다."""
     company = _check_interview(body)
-    with _logged(company, "마스터키 후보", "인터뷰 답변 접수 · 후보 작성 시작") as done:
+    with _logged(company, "핵심 사업 후보", "인터뷰 답변 접수 · 후보 작성 시작") as done:
         graph.invoke(Command(resume={"answers": {k: v for k, v in body.answers.items() if v}}), _cfg(body.thread_id, company))
         tasks = graph.get_state(_cfg(body.thread_id)).tasks
         draft = next(i.value for t in tasks for i in t.interrupts)
@@ -283,11 +285,11 @@ def answer_interview(body: InterviewIn):
 
 @app.post("/api/master/prompt")
 def write_master_prompt(body: MasterPromptIn):
-    """담당자가 직접 적은 마스터키로 검색 프롬프트를 작성한다 (그래프는 확인 단계에 그대로 멈춰 있다)."""
+    """담당자가 직접 적은 핵심 사업으로 검색 프롬프트를 작성한다 (그래프는 확인 단계에 그대로 멈춰 있다)."""
     company = _check_master(body)
     key = clean_master_key(body.key)
     if not key:
-        raise HTTPException(400, "마스터키를 입력하세요.")
+        raise HTTPException(400, "핵심 사업을 입력하세요.")
     state = graph.get_state(_cfg(body.thread_id)).values
     with _logged(company, "검색 프롬프트", f"직접 입력 '{key}' 프롬프트 작성 시작") as done:
         prompt = master_prompt(company, key, answer_lines(state["interview_questions"], state["prefs"]))
@@ -297,7 +299,7 @@ def write_master_prompt(body: MasterPromptIn):
 
 @app.post("/api/master/stream")
 def confirm_master_stream(body: MasterIn):
-    """마스터키 확인 → 추천 실행을 SSE로: 단계가 끝날 때마다 step 이벤트(중간 결과), 마지막에 result 이벤트."""
+    """핵심 사업 확인 → 추천 실행을 SSE로: 단계가 끝날 때마다 step 이벤트(중간 결과), 마지막에 result 이벤트."""
     company = _check_master(body)  # 권한·중복 오류는 스트림 시작 전에 HTTP 오류로
 
     def events():

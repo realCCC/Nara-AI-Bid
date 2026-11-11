@@ -350,6 +350,11 @@
   .journey .js.down { background: var(--warn-soft); color: var(--warn); }
   .journey .arr { color: var(--faint); }
   .journey .gain { margin-left: 4px; font-weight: 700; color: var(--ok); white-space: nowrap; }
+  .j-why { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 4px; font-size: 12px; color: var(--text-2); }
+  .j-why li { display: flex; align-items: baseline; gap: 6px; }
+  .j-why .js { flex: none; padding: 1px 7px; border-radius: 999px; font-weight: 600; font-family: var(--mono); }
+  .j-why .js.up { background: var(--ok-soft); color: var(--ok); }
+  .j-why .js.down { background: var(--warn-soft); color: var(--warn); }
 
   /* 공고 선택 · 제안서 */
   .picked { padding: 16px 18px; border-radius: 12px; border: 1px solid var(--ok); background: var(--card); }
@@ -570,17 +575,17 @@
         <div id="interviewBody"></div>
         <div class="row" style="justify-content:flex-end; margin-top:16px; gap:8px;">
           <button class="btn" id="skipInterviewBtn">모두 건너뛰기</button>
-          <button class="btn primary" id="submitInterviewBtn">마스터키 후보 보기</button>
+          <button class="btn primary" id="submitInterviewBtn">핵심 사업 후보 보기</button>
         </div>
       </div>
 
       <div class="panel hidden" id="masterCard" style="margin-top:20px; padding:24px;">
-        <div class="row" style="gap:8px; font-size:13px; color:var(--sub);"><span class="kind ai">AI</span>1단계 · 마스터키 <span id="masterSource"></span></div>
+        <div class="row" style="gap:8px; font-size:13px; color:var(--sub);"><span class="kind ai">AI</span>1단계 · 이번에 찾을 핵심 사업 <span id="masterSource"></span></div>
         <h2 style="margin:6px 0 0; font-size:22px;">이번에 가장 원하는 사업은 무엇인가요?</h2>
-        <p class="muted" style="margin:6px 0 0; font-size:14px;">마스터키와 맞는 공고를 가장 먼저 추천합니다. 맞지 않는 공고도 제외하지 않고 뒤에 둡니다.</p>
+        <p class="muted" style="margin:6px 0 0; font-size:14px;">핵심 사업과 맞는 공고를 가장 먼저 추천합니다. 맞지 않는 공고도 제외하지 않고 뒤에 둡니다.</p>
         <div class="q" style="border:0; padding:0; margin:0;"><div class="opts" id="masterOptions"></div></div>
         <div class="row hidden" id="masterCustomRow" style="margin-top:10px; gap:8px;">
-          <input id="masterCustom" aria-label="마스터키 직접 입력" placeholder="예) AI 교육" style="flex:1 1 220px; min-width:0; padding:10px 12px; border-radius:10px; border:1px solid var(--field-line); font:inherit; font-size:14px;">
+          <input id="masterCustom" aria-label="핵심 사업 직접 입력" placeholder="예) AI 교육" style="flex:1 1 220px; min-width:0; padding:10px 12px; border-radius:10px; border:1px solid var(--field-line); font:inherit; font-size:14px;">
           <button class="btn" id="masterWriteBtn">검색 프롬프트 작성</button>
         </div>
         <h3 style="margin:18px 0 0; font-size:15px;">검색 프롬프트</h3>
@@ -882,9 +887,9 @@ async function startRecommend() {
 }
 const postJson = (url, body) => api(url, { method: "POST", headers: { "Content-Type": "application/json" },
   body: JSON.stringify({ token: session.token, thread_id: state.threadId, ...body }) });
-// 인터뷰 답변 → 마스터키 후보와 검색 프롬프트 (담당자 확인에서 멈춤)
+// 인터뷰 답변 → 핵심 사업 후보와 검색 프롬프트 (담당자 확인에서 멈춤)
 const answerInterview = answers => postJson("/api/interview", { answers });
-// 확인한 마스터키 → 추천 결과(HITL ①에서 멈춤). SSE로 받아 단계가 끝날 때마다 onStep(중간 결과)을 부른다
+// 확인한 핵심 사업 → 추천 결과(HITL ①에서 멈춤). SSE로 받아 단계가 끝날 때마다 onStep(중간 결과)을 부른다
 async function confirmMaster(master, onStep = () => {}) {
   const res = await fetch("/api/master/stream", { method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ token: session.token, thread_id: state.threadId, ...master }) });
@@ -958,7 +963,7 @@ $("runBtn").onclick = async () => {
     const ai = r.questions.some(q => q.source === "llm");
     setStage("st1", r.questions.length, "active");
     $("st1Label").textContent = ai ? "개 AI 맞춤 문항" : "개 기본 문항";
-    $("progressText").textContent = "추천 조건을 고른 뒤 [마스터키 후보 보기]를 누르세요.";
+    $("progressText").textContent = "추천 조건을 고른 뒤 [핵심 사업 후보 보기]를 누르세요.";
     $("st1").querySelector(".hint").textContent = "아래 문항에서 추천 조건을 고르세요.";
   } catch (e) {
     $("progressText").textContent = "오류: " + e.message;
@@ -975,7 +980,7 @@ const PROGRESS_STEPS = [  // [이 노드가 끝나면, 진행률, 진행 중인 
   ["search", 40, "st3", "리랭커가 상위 후보를 다시 정렬하는 중"],
   ["rerank", 55, "st4", "상위 공고 PDF를 읽고 LLM이 근거와 함께 순위를 매기는 중"],
   ["rag_recommend", 85, "st5", "검증 에이전트가 상위 후보의 참가 자격을 다시 확인하는 중"],
-  ["verify_recommendations", 98, null, "결과 정리 중"],
+  ["verify_recommendations", 98, null, "결과 정리 중 (정답셋 불통과면 4단계로 되돌아가 다시 순위)"],
 ];
 const STAGE_OF = { review_master: "st1", filter_and_score: "st2", search: "st3", rerank: "st3", rag_recommend: "st4",
                    verify_recommendations: "st5" };  // 스트림 노드 → 단계 (search·rerank는 3단계 안에 둘 다)
@@ -1034,26 +1039,28 @@ function trackStream() {
   return { onStep, stop: () => clearInterval(id) };
 }
 const LIST_NAMES = { rule: "룰 순위", bm25: "BM25", dense: "의미(dense)", body: "공고서 본문" };
-const QUERY_SOURCE = { master: "마스터키 검색 프롬프트", llm: "AI 작성", interview: "인터뷰 주력 분야", template: "템플릿" };
+const QUERY_SOURCE = { master: "핵심 사업 검색 프롬프트", llm: "AI 작성", interview: "인터뷰 주력 분야", template: "템플릿" };
 const briefList = (items, extra) => `<ol>${items.map(t => `<li>${esc(t.bidNtceNm)} ${extra(t)}</li>`).join("")}</ol>`;
 function renderLive(ev, sec) {
   const L = {
-    review_master: () => ["ai", `<b>마스터키</b> ${ev.master ? esc(ev.master.key) : "없음"} · ${ev.conditions ? `인터뷰 답 ${ev.conditions}개 반영` : "기본 조건"}`, ""],
+    review_master: () => ["ai", `<b>핵심 사업</b> ${ev.master ? esc(ev.master.key) : "없음"} · ${ev.conditions ? `인터뷰 답 ${ev.conditions}개 반영` : "기본 조건"}`, ""],
     filter_and_score: () => ["", `<b>자격 필터</b> 공고 ${ev.total}건 중 <b>${ev.hard_pass}건</b> 통과`,
       `${ev.keywords.length ? `<div class="muted" style="margin-top:4px;">의미 매칭 키워드 · ${esc(ev.keywords.join(", "))}</div>` : ""}
        <details><summary>룰 점수 상위 ${ev.top.length}건</summary>${briefList(ev.top, t => `<span class="mono">${esc(t.soft_score)}점</span>`)}</details>`],
     search: () => ["ai", `<b>의미 검색</b> ${(ev.lists || []).map(x => esc(LIST_NAMES[x] || x)).join(" + ")} → RRF
       ${ev.path === "semantic" ? "" : '<span class="tag gray">키워드 검색만</span>'}
-      ${ev.master ? `<span class="tag llm">마스터키 일치 ${ev.master.hits}건 우선</span>` : ""}`,
+      ${ev.master ? `<span class="tag llm">핵심 사업 일치 ${ev.master.hits}건 우선</span>` : ""}`,
       `<div class="q-text">검색 문장 (${esc(QUERY_SOURCE[ev.query_source] || "-")}) · ${esc(ev.query)}</div>
        <details><summary>RRF 상위 ${ev.top.length}건</summary>${briefList(ev.top, t => `<span class="mono">${fmt(t.rrf, 4)}</span>`)}</details>`],
     rerank: () => ["ai", `<b>리랭크</b> 상위 ${ev.top.length}건 선별 ${ev.rerank === "applied" ? "· 리랭커 적용" : '<span class="tag gray">리랭크 생략</span>'}`,
       `<details><summary>후보 ${ev.top.length}건 (공고서 근거 순위 전)</summary>${briefList(ev.top, () => "")}</details>`],
-    rag_recommend: () => ["ai", `<b>공고서 근거 순위</b> ${ev.rag_status === "llm" ? "AI가 공고서 PDF 근거로 순위를 다시 매김" : esc(RAG_LABEL[ev.rag_status] || ev.rag_status)}`,
-      `<details><summary>순위 ${ev.top.length}건</summary>${briefList(ev.top, () => "")}</details>`],
+    rag_recommend: () => ["ai", `<b>공고서 근거 순위${ev.retry ? ` · 재순위 ${ev.retry.attempt}회차` : ""}</b> ${ev.rag_status === "llm" ? (ev.retry ? "5단계 불통과 내용을 비평 프롬프트로 받아 다시 순위를 매김" : "AI가 공고서 PDF 근거로 순위를 다시 매김") : esc(RAG_LABEL[ev.rag_status] || ev.rag_status)}`,
+      `${ev.retry ? `<details><summary>전달된 불통과 내용 ${ev.retry.reasons.length}건</summary><ul>${ev.retry.reasons.map(t => `<li>${esc(t)}</li>`).join("")}</ul></details>` : ""}
+       <details><summary>순위 ${ev.top.length}건</summary>${briefList(ev.top, () => "")}</details>`],
     verify_recommendations: () => {
       const v = ev.verification;
-      return ["ai", `<b>추천 검증</b> ${v.status === "passed" ? `상위 ${v.checked}건 재평가 · ${v.changed ? "순위 조정" : "순위 유지"}${v.flagged ? ` · 자격 의심 ${v.flagged}건` : ""}` : `생략 (${esc(v.reason || "-")})`}`, ""];
+      return ["ai", `<b>추천 검증</b> ${v.status === "passed" ? `상위 ${v.checked}건 재평가 · ${v.changed ? "순위 조정" : "순위 유지"}${v.flagged ? ` · 자격 의심 ${v.flagged}건` : ""}` : `생략 (${esc(v.reason || "-")})`} ${judgeTag(v.judge)}`,
+        failList(v.judge)];
     },
   }[ev.node];
   if (!L) return;
@@ -1063,6 +1070,19 @@ function renderLive(ev, sec) {
   log.insertAdjacentHTML("beforeend", `<li class="${cls}"><div class="lh">${head}<span class="t" title="추천 시작부터 누적 시간">누적 ${sec}초</span></div>${body}</li>`);
   const last = log.lastElementChild.querySelector("details");
   if (last) last.open = true;
+}
+
+// 5단계 정답셋 판정: 통과/불통과 표시 + 불통과 내용 (불통과면 이 내용이 비평 프롬프트로 4단계에 전달된다)
+const JUDGE_LABEL = { passed: "정답셋 통과", failed: "정답셋 불통과", no_gold: "정답셋 라벨 없음 · 통과 처리", skipped: "" };
+function judgeTag(j) {
+  if (!j || !JUDGE_LABEL[j.status]) return "";
+  return `<span class="tag ${j.status === "failed" ? "warn" : "llm"}">${JUDGE_LABEL[j.status]}</span>${j.status === "failed"
+    ? (j.next === "rag_recommend" ? " → 4단계로 되돌려 다시 순위" : ` · 재시도 한도 도달${j.restored != null ? ` → ${j.restored}회차 결과 사용` : ""}`) : ""}`;
+}
+function failList(j) {
+  if (!j || !j.fails || !j.fails.length) return "";
+  return `<details><summary>불통과 내용 ${j.fails.length}건</summary><ul>${j.fails.map(f =>
+    `<li><span class="tag warn">${esc(f.kind)}</span> ${esc(f.text)}</li>`).join("")}</ul></details>`;
 }
 
 let masterCands = [];
@@ -1101,13 +1121,13 @@ async function submitInterview(answers) {
   lastAnswers = answers;
   $("interviewCard").classList.add("hidden");
   setStage("st1", "…", "active");
-  $("st1Label").textContent = "마스터키 후보 작성 중";
-  $("progressText").innerHTML = '<span class="spinner"></span>업체 역량과 인터뷰 답으로 마스터키 후보를 찾는 중';
+  $("st1Label").textContent = "핵심 사업 후보 작성 중";
+  $("progressText").innerHTML = '<span class="spinner"></span>업체 역량과 인터뷰 답으로 핵심 사업 후보를 찾는 중';
   try {
     renderMaster(await answerInterview(answers));
     $("st1").querySelector(".num").textContent = "";
-    $("st1Label").textContent = "마스터키 확인 대기";
-    $("progressText").textContent = "마스터키를 고르고 검색 프롬프트를 확인한 뒤 [이 프롬프트로 추천 시작]을 누르세요.";
+    $("st1Label").textContent = "핵심 사업 확인 대기";
+    $("progressText").textContent = "핵심 사업을 고르고 검색 프롬프트를 확인한 뒤 [이 프롬프트로 추천 시작]을 누르세요.";
   } catch (e) {
     $("progressText").textContent = "오류: " + e.message;
     $("runBtn").disabled = false;
@@ -1133,7 +1153,7 @@ async function startFromMaster(master) {
   lastMaster = master;
   $("masterCard").classList.add("hidden");
   setStage("st1", "", "done");
-  $("st1Label").textContent = `마스터키 · ${master.key}`;
+  $("st1Label").textContent = `핵심 사업 · ${master.key}`;
   setStage("st2", "…", "active");
   showProgress({ done: [], info: {} }, 0);
   const live = trackStream();
@@ -1149,7 +1169,7 @@ async function startFromMaster(master) {
     $("st5Label").textContent = RAG_LABEL[r.rag_status] || "건";
     const verified = v && v.status === "passed";
     setStage("st5", verified ? v.checked : "", verified ? "done" : "skip");
-    $("st6Label").textContent = verified ? `건 재평가 · ${v.changed ? "순위 조정" : "순위 유지"}${v.flagged ? ` · 자격 의심 ${v.flagged}건` : ""}` : "생략";
+    $("st6Label").textContent = verified ? `건 재평가 · ${v.changed ? "순위 조정" : "순위 유지"}${v.flagged ? ` · 자격 의심 ${v.flagged}건` : ""}${v.judge && JUDGE_LABEL[v.judge.status] ? ` · ${JUDGE_LABEL[v.judge.status]}` : ""}${v.judge?.attempt ? ` · 재순위 ${v.judge.attempt}회` : ""}` : "생략";
     $("progressBar").style.transform = "scaleX(1)";
     $("progressText").textContent = isLlm ? "출처 대조 완료" : "룰 추천 완료 — Azure 키를 입력하면 공고서 근거 순위·검증이 추가됩니다";
     renderStatus(r);
@@ -1195,7 +1215,7 @@ function renderStatus(r) {
     row("실행 경로", `${MODE_BADGE[r.rag_status] || esc(r.rag_status)}
       <span class="tag ${s.path === "semantic" ? "ok" : "gray"}">검색 ${s.path === "semantic" ? "의미 검색" : "키워드 검색"}</span>
       <span class="tag ${s.rerank === "applied" ? "ok" : "gray"}">리랭크 ${s.rerank === "applied" ? "적용" : "생략"}</span> ${chunkTag} ${vTag}`),
-    ...(iv.master ? [row("마스터키", `<span class="pill">${esc(iv.master.key)}</span> <span class="muted">${s.master ? `일치 ${s.master.hits}건 우선` : ""}${iv.master.edited ? " · 프롬프트 담당자 수정" : ""}</span>`)] : []),
+    ...(iv.master ? [row("핵심 사업", `<span class="pill">${esc(iv.master.key)}</span> <span class="muted">${s.master ? `일치 ${s.master.hits}건 우선` : ""}${iv.master.edited ? " · 프롬프트 담당자 수정" : ""}</span>`)] : []),
     row("검색 문장", `${esc(s.query || "-")} <span class="muted">(${QUERY_SOURCE[s.query_source] || "-"})</span>
       ${s.path !== "semantic" && s.reason ? `<div class="muted">${esc(s.reason)}</div>` : ""}${s.rerank !== "applied" && s.rerank_reason ? `<div class="muted">리랭크 생략: ${esc(s.rerank_reason)}</div>` : ""}`),
     row("검색 결합", `${(s.lists || []).map(x => `<span class="pill">${esc(LIST_NAMES[x] || x)}</span>`).join("")} <span class="muted">→ RRF${s.rerank === "applied" && SYS.rerank_model ? ` → ${esc(SYS.rerank_model)}` : ""}</span>`),
@@ -1221,7 +1241,7 @@ const FIELD_LABELS = {
   pubPrcrmntClsfcNo: "업종 세부분류", pubPrcrmntClsfcNm: "업종 세부분류", asignBdgtAmt: "배정 예산",
   cntrctCnclsMthdNm: "계약방식", bidPrtcptLmtYn: "중소기업 참여 제한", rgnLmtBidLocplcJdgmBssNm: "지역 제한 기준",
   bidClseDt: "입찰 마감",
-  역량키워드: "역량 키워드", 참여가능금액: "참여 가능 금액", 선호계약방식: "선호 계약방식", 업종: "업종", 과거실적: "과거 실적",
+  역량키워드: "역량 키워드", 핵심사업: "핵심 사업", 마스터키: "핵심 사업", 참여가능금액: "참여 가능 금액", 선호계약방식: "선호 계약방식", 업종: "업종", 과거실적: "과거 실적",
 };
 function fieldValue(name, value) {
   if (!value) return "(값 없음)";
@@ -1377,8 +1397,43 @@ function journeyRow(t, i, reranked) {
     return `${k ? '<span class="arr" aria-hidden="true">→</span>' : ""}<span class="js ${cls}">${name} <b>${r}위</b></span>`;
   }).join("");
   const gain = (j.rule || 0) - (i + 1);
+  const why = steps.slice(1).map(([name, r], k) => {
+    const prev = steps[k][1];
+    if (prev === r) return "";
+    const d = prev - r, txt = moveReason(name, d > 0, t);
+    return txt ? `<li><span class="js ${d > 0 ? "up" : "down"}">${name} ${d > 0 ? "▲" : "▼"}${Math.abs(d)}</span><span>${txt}</span></li>` : "";
+  }).join("");
   return `<div class="journey" aria-label="단계별 순위 변화"><span class="j-lbl">순위 변화</span>${html}
-    ${gain > 0 ? `<span class="gain">▲ ${gain}계단</span>` : ""}</div>`;
+    ${gain > 0 ? `<span class="gain">▲ ${gain}계단</span>` : ""}</div>
+    ${why ? `<ul class="j-why" aria-label="순위 변동 근거">${why}</ul>` : ""}`;
+}
+// 순위 변동 근거 (단계별 한 줄): 검색 목록 순위·핵심 사업 / 리랭커 관련도 / AI 공고서 근거·자격 의심 / 검증 의견·자격 불충족
+const cut = (s, n = 60) => { s = String(s || ""); return s.length > n ? s.slice(0, n) + "…" : s; };
+function moveReason(step, up, t) {
+  const w = t.journey?.why || {}, V = t.verify, L = t.llm;
+  if (step === "검색") {
+    if (w.master && up) return `핵심 사업 「${esc(state.result?.search?.master?.key || "")}」 일치 공고라 우선 배치`;
+    const ls = Object.entries(w.lists || {}).filter(([, r]) => r != null).map(([n, r]) => `${LIST_NAMES[n] || n} ${r}위`).join(" · ");
+    return `${up ? "검색 문장과 관련도가 룰 점수보다 높음" : "검색 문장과 관련도가 룰 점수보다 낮음"}${ls ? ` (${ls})` : ""}`;
+  }
+  if (step === "리랭크") {
+    const rr = w.rerank_rank ? ` (리랭커 관련도 ${w.rerank_rank}위/${w.rerank_n}건${t.search?.rerank != null ? ` · ${fmt(t.search.rerank, 2)}` : ""})` : "";
+    return `${up ? "리랭커가 검색 문장과 더 맞는 과업으로 판단" : "리랭커가 다른 공고를 더 관련 있다고 판단"}${rr}`;
+  }
+  if (step === "AI 근거") {
+    const flag = (t.qualification_flags || [])[0];
+    if (!up && flag) return `자격 의심 · ${esc(cut(flag))}`;
+    const top = L?.reasons?.[0]?.text;
+    if (up) return top ? `공고서 근거 · ${esc(cut(top))}` : "공고서를 읽고 과업이 더 맞다고 판단";
+    return t.pdf_evidence ? "다른 공고의 공고서 근거가 더 직접적이라 아래로" : "공고서 근거가 부족해 아래로";
+  }
+  if (step === "검증") {
+    const is = V?.issues?.[0];
+    if (is) return `자격 불충족 확인 · ${esc(is.type)}: ${esc(cut(is.text))} → 하위 배치`;
+    if (V) return `적합도 ${esc(V.fit_score)}점 · ${esc(cut(V.comment))}`;
+    return up ? "위 공고가 자격 불충족으로 내려가 올라옴" : "검증 대상 밖 · 다른 공고 재배치로 이동";
+  }
+  return "";
 }
 
 function renderResults() {

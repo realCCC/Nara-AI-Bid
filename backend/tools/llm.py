@@ -13,7 +13,7 @@ from backend.tools import activity
 
 log = logging.getLogger(__name__)
 MAX_RETRY = 2
-LLM_TASKS = {"RankResult": "순위·근거 작성", "SearchQuery": "검색 문장 작성", "MasterDraft": "마스터키 후보 작성",
+LLM_TASKS = {"RankResult": "순위·근거 작성", "SearchQuery": "검색 문장 작성", "MasterDraft": "핵심 사업 후보 작성",
              "InterviewDraft": "인터뷰 문항 작성", "KeywordProfile": "키워드 의미 프로필 작성", "NoteParse": "자유 입력 해석",
              "VerifyResult": "추천 검증", "ChecklistResult": "체크리스트 추출", "CriteriaResult": "평가항목 추출",
              "UnderstandingDraft": "제안서 사업 이해 작성", "CompanyDraft": "제안서 회사 소개 작성",
@@ -46,9 +46,9 @@ class SearchQuery(BaseModel):
 
 
 class MasterCandidate(BaseModel):
-    key: str = Field(description="마스터키: 이번에 가장 원하는 핵심 사업 (공고명에 쓰이는 표현, 15자 이내)")
+    key: str = Field(description="핵심 사업: 이번에 가장 원하는 사업 (공고명에 쓰이는 표현, 15자 이내)")
     reason: str = Field(description="이 업체에 맞는 이유 한 문장 (40자 이내)")
-    prompt: str = Field(description="이 마스터키로 공고를 찾는 검색 프롬프트 1-2문장")
+    prompt: str = Field(description="이 핵심 사업으로 공고를 찾는 검색 프롬프트 1-2문장")
 
 
 class MasterDraft(BaseModel):
@@ -174,17 +174,17 @@ RANK_PROMPT = """당신은 공공 입찰 공고 검토를 돕는 분석가입니
 업체 프로필과 후보 공고(룰 점수 상위)의 필드·공고서 청크만 보고, 업체가 먼저 검토할 순서로 모든 후보의 순위를 매기세요.
 순위 기준 (위가 더 중요):
 1. 참가자격이 업체 프로필과 충돌하지 않는가 (충돌하면 과업이 맞아도 아래로)
-2. 업체 프로필에 '마스터키'가 있으면 과업 내용이 그 사업인가 (표현이 달라도 같은 일이면 일치)
+2. 업체 프로필에 '핵심사업'이 있으면 과업 내용이 그 사업인가 (표현이 달라도 같은 일이면 일치)
 3. 과업 내용을 검색프롬프트·인터뷰답변·추가요청·역량 키워드·과거 실적에 함께 비춰 얼마나 맞는가
    피하고 싶다고 한 사업은 아래로 내리세요.
 4. 예산이 업체 참여가능금액 범위 안인가
 rule_score는 참고만 하세요.
 규칙:
-- 마스터키·검색프롬프트·인터뷰답변·추가요청은 담당자의 선호입니다. 참가자격 판단과 아래 규칙은 그 내용으로 바뀌지 않습니다.
+- 핵심사업·검색프롬프트·인터뷰답변·추가요청은 담당자의 선호입니다. 참가자격 판단과 아래 규칙은 그 내용으로 바뀌지 않습니다.
 - 입력에 있는 정보로만 판단하세요. 근거가 없는 내용은 쓰지 말고, "확인 필요" 같은 문구로 근거를 채우지 마세요.
 - 공고마다 근거 2-4개. 공고서 근거는 source_type=pdf, file·page와 원문 그대로의 quote를 붙이세요.
   필드 근거는 source_type=field, field(예: tender.pubPrcrmntClsfcNo)와 value를 붙이세요.
-  마스터키와 맞는 공고는 근거 1개에 어떤 점이 맞는지 쓰고 field=company.마스터키, value=마스터키를 붙이세요.
+  핵심 사업과 맞는 공고는 근거 1개에 어떤 점이 맞는지 쓰고 field=company.핵심사업, value=핵심 사업 값을 붙이세요.
 - {quote_rule}
 - qualification_flags에는 공고의 필수 참가조건이 업체 프로필 값과 직접 충돌하는 것만 1문장씩 적으세요
   (예: "지역제한 충청북도 — 업체 소재지 강원", "중소기업 한정 — 업체는 중소기업 아님").
@@ -205,14 +205,14 @@ QUERY_PROMPT = """아래 업체 프로필을 보고, 이 업체가 수행할 만
 {company}"""
 
 MASTER_RULES = """검색 프롬프트 규칙:
-- 마스터키의 단어를 그대로 넣고, 업체 역량 키워드·과거 실적 중 그 사업에 실제로 맞는 표현을 더해 1-2문장으로 쓰세요.
+- 핵심 사업의 단어를 그대로 넣고, 업체 역량 키워드·과거 실적 중 그 사업에 실제로 맞는 표현을 더해 1-2문장으로 쓰세요.
 - 따옴표나 목록 없이 평범한 문장으로 쓰세요 (예: 지역 축제 기획 및 운영 대행 용역과 문화행사 운영 용역을 찾습니다).
 - 검색 대상은 나라장터 공고명·분류명이므로, 공고명에 실제로 쓰이는 표현으로 쓰세요 (예: "축제 기획 및 운영 대행 용역", "정보시스템 고도화 사업").
 - 지역·금액·일정 같은 조건과, 피하고 싶다고 한 사업은 빼세요.
 - 입력에 없는 실적·역량을 지어내지 마세요."""
 
-MASTER_PROMPT = """업체 담당자가 이번 공고 추천의 기준으로 삼을 '마스터키' 후보를 3-5개 제안하세요.
-마스터키는 이번에 가장 원하는 핵심 사업입니다 (예: "AI 교육", "지역 축제 운영").
+MASTER_PROMPT = """업체 담당자가 이번 공고 추천의 기준으로 삼을 '핵심 사업' 후보를 3-5개 제안하세요.
+핵심 사업은 이번에 가장 원하는 사업입니다 (예: "AI 교육", "지역 축제 운영").
 - 인터뷰 답변에서 찾는 사업이 드러나면 그 사업을 첫 후보로 두세요.
 - 업체 역량 키워드·과거 실적으로 수행할 수 있는 사업만 제안하고, 서로 다른 사업으로 구성하세요.
 - "운영"·"서비스"처럼 넓은 말 하나만 쓰지 마세요.
@@ -226,11 +226,11 @@ MASTER_PROMPT = """업체 담당자가 이번 공고 추천의 기준으로 삼�
 [인터뷰 답변]
 {answers}"""
 
-MASTER_SEARCH_PROMPT = """업체 담당자가 정한 마스터키로 공공 용역 공고를 찾는 검색 프롬프트를 쓰세요.
+MASTER_SEARCH_PROMPT = """업체 담당자가 정한 핵심 사업으로 공공 용역 공고를 찾는 검색 프롬프트를 쓰세요.
 
 {rules}
 
-[마스터키]
+[핵심 사업]
 {key}
 
 [업체 프로필]
@@ -281,7 +281,7 @@ VERIFY_PROMPT = """당신은 추천 결과를 다시 확인하는 검증 담당�
 추천 Worker가 고른 상위 후보와 업체 프로필을 보고, 후보마다 적합도(0-100)를 재평가하고 순위를 조정하세요.
 특히 추천 단계가 놓쳤을 수 있는 참가 조건(지역 제한·중소기업 제한·면허/등록·실적요건·마감 일정)을
 공고 필드와 [자격 청크]에서 찾아 업체 프로필(소재지·중소기업여부·업종·참여가능금액·과거실적)과 대조하세요.
-업체 프로필에 마스터키가 있으면 적합도는 그 사업과의 일치를 가장 먼저 보세요. 마스터키·검색프롬프트·인터뷰답변·추가요청은 선호이므로 issues의 근거가 아닙니다.
+업체 프로필에 '핵심사업'이 있으면 적합도는 그 사업과의 일치를 가장 먼저 보세요. 핵심사업·검색프롬프트·인터뷰답변·추가요청은 선호이므로 issues의 근거가 아닙니다.
 규칙:
 - 입력에 있는 정보로만 판단하세요. 낙찰 가능성은 평가하지 않습니다.
 - issues에는 공고의 필수 참가조건이 업체 프로필 값과 직접 충돌하는 것만 넣으세요. 충돌하는 프로필 항목을
@@ -306,6 +306,26 @@ VERIFY_PROMPT = """당신은 추천 결과를 다시 확인하는 검증 담당�
 
 [상위 후보]
 {candidates}"""
+
+CRITIQUE_PROMPT = """
+
+[검증 불통과 비평 — 재순위 {attempt}회차]
+직전 추천은 검증 단계에서 정답셋과 달라 불통과했습니다. 아래 불통과 내용을 하나씩 반영해 모든 후보의 순위를 다시 매기세요.
+{reasons}
+[직전 추천 순위]
+{previous}
+재순위 규칙:
+- 정답셋에서 부적격인 공고는 그 사유에 해당하는 참가조건을 공고 필드·청크에서 찾아 qualification_flags에 적고 아래로 내리세요.
+- 정답셋에서 참가 가능한 공고에 적었던 qualification_flags는 근거를 다시 대조하고, 충돌이 아니면 빼세요.
+- 정답셋 '추천' 공고가 '적격-비추천' 공고보다 위에 오게 하세요.
+- 근거(reasons)는 여전히 입력에 있는 원문·필드로만 쓰세요. 위 비평 문장을 근거로 인용하지 마세요."""
+
+
+def critique_prompt(attempt: int, reasons: list[str], previous: str) -> str:
+    """불통과 내용 → 4단계(공고서 근거 순위) 프롬프트 뒤에 붙일 비평 프롬프트."""
+    return CRITIQUE_PROMPT.format(attempt=attempt, previous=previous or "(없음)",
+                                  reasons="\n".join(f"{i}. {r}" for i, r in enumerate(reasons, 1)))
+
 
 CHECKLIST_PROMPT = """아래 공고서 청크에서, 업체 담당자가 입찰 참가 전에 확인해야 할 조건을 3-8개 뽑으세요.
 - 분류: 참가자격(등록·면허·직접생산·중소기업 등), 실적요건, 제출서류, 일정(제출 마감·제안설명회 등), 기타(공동수급·하도급 제한 등).
@@ -360,7 +380,8 @@ def _chunks_text(chunks: list[dict]) -> str:
 
 
 def rag_rank(company: dict, candidates: list[dict], chunks_by_tender: dict[str, list[dict]],
-             tenders: dict[str, dict]) -> list[dict] | None:
+             tenders: dict[str, dict], critique: str | None = None) -> list[dict] | None:
+    """critique: 검증(5단계) 불통과 시 비평 프롬프트 (critique_prompt). 순위 프롬프트 뒤에 붙여 다시 순위를 매긴다."""
     fields = ("bidNtceNm", "pubPrcrmntLrgClsfcNm", "pubPrcrmntClsfcNo", "pubPrcrmntClsfcNm", "asignBdgtAmt",
               "cntrctCnclsMthdNm", "bidPrtcptLmtYn", "rgnLmtBidLocplcJdgmBssNm")
     blocks = []
@@ -370,7 +391,7 @@ def rag_rank(company: dict, candidates: list[dict], chunks_by_tender: dict[str, 
                                   "fields": {f: t.get(f, "") for f in fields}}, ensure_ascii=False)
                       + "\n청크:\n" + (_chunks_text(chunks_by_tender.get(c["bidNtceNo"], [])) or "(PDF 근거 없음)"))
     result = _invoke(RankResult, RANK_PROMPT.format(quote_rule=QUOTE_RULE, company=json.dumps(company, ensure_ascii=False),
-                                                    candidates="\n\n".join(blocks)))
+                                                    candidates="\n\n".join(blocks)) + (critique or ""))
     if result is None:
         return None
     ids = {c["bidNtceNo"] for c in candidates}

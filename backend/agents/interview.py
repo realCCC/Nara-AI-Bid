@@ -1,4 +1,4 @@
-"""인터뷰 Worker (HITL ⓪): 문항 준비 → 객관식 + 자유 입력 인터뷰 → prefs → 마스터키 후보 → 담당자 확인."""
+"""인터뷰 Worker (HITL ⓪): 문항 준비 → 객관식 + 자유 입력 인터뷰 → prefs → 핵심 사업 후보 → 담당자 확인."""
 from langgraph.types import interrupt
 
 from backend.agents.state import ProposalState
@@ -28,11 +28,11 @@ def interview(state: ProposalState):  # HITL ⓪: 객관식 + 자유 입력 인�
 
 
 def prepare_master(state: ProposalState):
-    """마스터키 후보와 후보별 검색 프롬프트 (LLM). interrupt 재개 때 다시 실행되지 않도록 확인 노드와 분리."""
+    """핵심 사업 후보와 후보별 검색 프롬프트 (LLM). interrupt 재개 때 다시 실행되지 않도록 확인 노드와 분리."""
     return {"master_draft": build_masters(state["company_profile"], state["interview_questions"], state["prefs"])}
 
 
-def review_master(state: ProposalState):  # HITL: 담당자가 마스터키를 고르고 검색 프롬프트를 확인·수정한 뒤 추천을 시작한다
+def review_master(state: ProposalState):  # HITL: 담당자가 핵심 사업을 고르고 검색 프롬프트를 확인·수정한 뒤 추천을 시작한다
     draft, picked = state["master_draft"], None
     if state.get("master_review"):
         picked = interrupt({**draft, "key_max": MASTER_KEY_MAX, "prompt_max": MASTER_PROMPT_MAX})

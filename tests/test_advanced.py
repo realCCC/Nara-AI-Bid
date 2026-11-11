@@ -671,3 +671,105 @@ def test_llm_query_persisted(monkeypatch, tmp_path):
     assert recommend.make_query(company) == ("질의1", "llm")
     monkeypatch.setattr(recommend, "_QUERY_CACHE", None)  # 새 프로세스처럼 메모리 캐시 비움 → 파일에서 읽음
     assert recommend.make_query(company) == ("질의1", "llm") and len(calls) == 1
+
+
+# ---------- 5단계 정답셋 판정 → 불통과면 비평 프롬프트로 4단계 재순위 (최대 2회) ----------
+GOLD3 = {"T1": {"label": "적격-비추천"}, "T2": {"label": "추천"}, "T3": {"label": "부적격", "reason": "지역제한(부산)"}}
+
+
+def _recs(order, flagged=()):
+    return [{"bidNtceNo": no, "bidNtceNm": f"공고{no}", "rank": i,
+             **({"verify": {"issues": [_issue()]}} if no in flagged else {})} for i, no in enumerate(order, 1)]
+
+
+def test_judge_against_gold():
+    from backend.agents.verify import judge
+
+    assert judge(_recs(["T2", "T1", "T3"], flagged={"T3"}), GOLD3) == []  # 라벨과 일치 → 통과
+    fails = judge(_recs(["T1", "T2", "T3"]), GOLD3)
+    assert [(f["bidNtceNo"], f["kind"]) for f in fails] == [("T3", "부적격 미검출"), ("T2", "순위 역전")]
+    assert "지역제한(부산)" in fails[0]["text"]
+    assert [f["kind"] for f in judge(_recs(["T2", "T1", "T3"], flagged={"T2", "T3"}), GOLD3)] == ["오탐"]
+    assert judge(_recs(["T9"]), GOLD3) == []  # 라벨 없는 공고는 비교하지 않음
+
+
+def _loop(monkeypatch, gold, rank_orders):
+    """그래프와 같은 순서로 4단계(RAG) ↔ 5단계(검증)를 돈다. rank_orders: RAG 호출마다 낼 순위."""
+    from backend.agents import rag, verify
+    from backend.graphs.proposal import route
+
+    calls = []
+
+    def fake_rag_rank(company, top, chunks, by_no, critique=None):
+        calls.append(critique)
+        order = rank_orders[min(len(calls) - 1, len(rank_orders) - 1)]
+        return [{"rank": i, "bidNtceNo": no, "reasons": [], "qualification_flags": []} for i, no in enumerate(order, 1)]
+
+    def fake_verify(company, cands, by_no, chunks):
+        ids = [c["bidNtceNo"] for c in cands]
+        res = _result(ids)
+        for it in res["items"]:  # T3에만 자격 issue (출처 대조는 생략)
+            it["issues"] = [_issue()] if it["bidNtceNo"] == "T3" else []
+        return res, None
+
+    monkeypatch.setattr(config, "llm_enabled", lambda: True)
+    monkeypatch.setattr(config, "VERIFY_TOP_N", 3)
+    monkeypatch.setattr(config, "VERIFY_MAX_RETRY", 2)
+    by_no = {r["bidNtceNo"]: {"bidNtceNo": r["bidNtceNo"]} for r in RECS}
+    for mod in (rag, verify):
+        monkeypatch.setattr(mod, "tenders", lambda state: by_no)
+    monkeypatch.setattr(rag, "tender_chunks", lambda t: [])
+    monkeypatch.setattr(rag, "expand_company", lambda c, p: c)
+    for mod in (rag, verify):
+        monkeypatch.setattr(mod, "with_note", lambda c, p: c)
+    monkeypatch.setattr(rag, "retrieve_for_company", lambda *a, **k: ([], "none"))
+    monkeypatch.setattr(rag, "check_evidence_sources", lambda reasons, *a: reasons)
+    monkeypatch.setattr(rag, "rule_reasons", lambda *a: [])
+    monkeypatch.setattr(rag, "soft_score", lambda *a: {})
+    monkeypatch.setattr(rag.llm, "rag_rank", fake_rag_rank)
+    monkeypatch.setattr(verify.llm, "verify_ranking", fake_verify)
+    monkeypatch.setattr(verify, "qualification_chunks", lambda head, b: {})
+    monkeypatch.setattr(verify, "confirm_issues", lambda result, *a: (result, 0))
+    monkeypatch.setattr(verify, "load_gold", lambda cid: gold)
+    monkeypatch.setattr(verify, "save", lambda *a, **k: None)
+
+    top = [{**r, "soft_score": 50, "reasons": []} for r in RECS[:3]]
+    state = {"company_profile": {"업체ID": "X"}, "top10": top, "prefs": {"master": {}}, "interview_questions": [],
+             "master_draft": {}}
+    steps = []
+    while (step := route(state)) in ("rag_recommend", "verify_recommendations"):
+        steps.append(step)
+        state |= verify.verify_recommendations(state, {}) if step == "verify_recommendations" else rag.rag_recommend(state)
+    return state, steps, calls
+
+
+def test_gold_pass_goes_to_select(monkeypatch):
+    state, steps, calls = _loop(monkeypatch, GOLD3, [["T2", "T1", "T3"]])
+    assert steps == ["rag_recommend", "verify_recommendations"] and calls == [None]
+    assert state["verification"]["judge"]["status"] == "passed"
+
+
+def test_gold_fail_returns_to_rag_with_critique(monkeypatch):
+    """불통과면 불통과 내용이 담긴 비평 프롬프트로 4단계 재순위 → 5단계 재검증. 통과하면 멈춘다."""
+    state, steps, calls = _loop(monkeypatch, GOLD3, [["T1", "T2", "T3"], ["T2", "T1", "T3"]])
+    assert steps == ["rag_recommend", "verify_recommendations"] * 2
+    assert calls[0] is None and "순위 역전" in calls[1] and "재순위 1회차" in calls[1]
+    j = state["verification"]["judge"]
+    assert j["status"] == "passed" and j["attempt"] == 1 and [h["fails"] for h in j["history"]] == [1, 0]
+    assert [r["bidNtceNo"] for r in state["recommendations"]] == ["T2", "T1", "T3"]
+
+
+def test_gold_fail_stops_after_two_and_keeps_best(monkeypatch):
+    """계속 불통과여도 4단계 재순위는 최대 2회. 재시도를 다 쓰면 불통과가 가장 적은 회차 결과를 쓴다."""
+    gold = {"T1": {"label": "적격-비추천"}, "T2": {"label": "추천"}, "T3": {"label": "추천"}}  # T3 오탐은 매번 남음
+    state, steps, calls = _loop(monkeypatch, gold, [["T1", "T2", "T3"], ["T2", "T1", "T3"], ["T1", "T2", "T3"]])
+    assert steps == ["rag_recommend", "verify_recommendations"] * 3 and len(calls) == 3
+    j = state["verification"]["judge"]
+    assert j["status"] == "failed" and j["attempt"] == 2 and j["next"] == "select_tender"
+    assert j["restored"] == 1 and [r["bidNtceNo"] for r in state["recommendations"]][:2] == ["T2", "T1"]
+
+
+def test_no_gold_passes(monkeypatch):
+    state, steps, _ = _loop(monkeypatch, {}, [["T1", "T2", "T3"]])
+    assert steps == ["rag_recommend", "verify_recommendations"]
+    assert state["verification"]["judge"]["status"] == "no_gold"

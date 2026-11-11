@@ -12,7 +12,8 @@ from backend.tools import keyword_profile, llm
 from backend.tools.interview import expand_company, interview_filter, semantic_keywords
 from backend.tools.loaders import load_region_limits, tenders_by_no
 from backend.tools.rules import hard_filter, recommend_by_rules
-from backend.tools.search import hybrid_search, keyword_similarity, master_first, rerank, template_query, tender_doc
+from backend.tools.search import (hybrid_search, keyword_similarity, master_first, master_match, rerank,
+                                  template_query, tender_doc)
 
 
 def rule_stage(tenders: list[dict], company: dict, region_limits: dict, prefs: dict | None = None) -> dict:
@@ -63,7 +64,7 @@ def _save_query(key: str, company: dict, query: str) -> None:
 
 
 def make_query(company: dict, prefs: dict | None = None) -> tuple[str, str]:
-    """검색 문장. 마스터키가 있으면 담당자가 확인한 검색 프롬프트를 그대로 쓴다.
+    """검색 문장. 핵심 사업이 있으면 담당자가 확인한 검색 프롬프트를 그대로 쓴다.
     없으면 업체정보 → 검색 문장: 주력 분야를 골랐으면 그 분야 문장, LLM이 없거나 실패하면 템플릿.
     고른 유사 표현과 자유 입력 원문은 뒤에 붙인다.
     (키워드 의미 프로필 유사어는 붙이지 않는다 — 20여 개를 붙이면 dense·리랭커 초점이 흐려져 실측에서 상위 10건이 나빠졌다)"""
@@ -97,13 +98,22 @@ def rerank_stage(search: dict, candidates: list[dict], tenders: dict[str, dict],
     top_k = top_k or settings.TOP_K
     docs = {c["bidNtceNo"]: tender_doc(tenders[c["bidNtceNo"]]) for c in candidates}
     result = rerank(search, docs) if candidates else {**search, "rerank": "skipped", "rerank_reason": "후보 없음"}
-    if candidates and search.get("master"):  # 리랭커가 섞어도 마스터키 일치 공고가 앞에 오게
+    if candidates and search.get("master"):  # 리랭커가 섞어도 핵심 사업 일치 공고가 앞에 오게
         result = master_first(result, docs, search["master"]["key"])
     by_no = {c["bidNtceNo"]: c for c in candidates}
     pre = {no: r for r, no in enumerate(search.get("order", []), 1)}  # 리랭크 전(하이브리드 검색) 순위
+    # 순위 변동 근거: 검색 목록별 순위(BM25·의미·본문), 핵심 사업 일치, 리랭커 관련도 순위 → 화면에서 '왜 움직였는지' 한 줄
+    lists = {name: r for name, r in result.get("ranks", {}).items() if name != "rule"}
+    by_rr = sorted((no for no in result["order"] if result["scores"][no].get("rerank") is not None),
+                   key=lambda no: -result["scores"][no]["rerank"])
+    rr_rank = {no: r for r, no in enumerate(by_rr, 1)}
+    master = (search.get("master") or {}).get("key")
+    why = lambda no: {"lists": {name: r.get(no) for name, r in lists.items()}, "rerank_rank": rr_rank.get(no),  # noqa: E731
+                      "rerank_n": len(by_rr), "master": bool(master and master_match(master, docs[no]))}
     # journey: 단계별 순위 (룰 점수 → 하이브리드 검색 → 리랭크). RAG·검증 단계가 이어서 채운다 → 화면에서 단계 효과를 보여 준다
     top = [{**by_no[no], "rank": i, "search": result["scores"][no],
-            "journey": {"rule": result["scores"][no].get("rule_rank"), "search": pre.get(no), "rerank": i}}
+            "journey": {"rule": result["scores"][no].get("rule_rank"), "search": pre.get(no), "rerank": i,
+                        "why": why(no)}}
            for i, no in enumerate(result["order"][:top_k], 1)]
     meta = {k: result.get(k) for k in ("path", "reason", "query", "query_source", "lists", "rerank", "rerank_reason",
                                        "semantic", "master", "moves")}

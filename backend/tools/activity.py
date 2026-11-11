@@ -75,15 +75,15 @@ def node_log(node: str, update) -> tuple[str, str, str] | None:
         prefs = update["prefs"]
         master = prefs["master"]
         if not master:
-            return "마스터키", f"마스터키 없이 진행 · 인터뷰 답 {len(prefs['answers'])}개", "warn"
+            return "핵심 사업", f"핵심 사업 없이 진행 · 인터뷰 답 {len(prefs['answers'])}개", "warn"
         kind = "담당자 수정" if master["edited"] else "자동 작성"
-        return "마스터키", f"'{master['key']}' 확정 · 검색 프롬프트 {kind} · 인터뷰 답 {len(prefs['answers'])}개", "info"
+        return "핵심 사업", f"'{master['key']}' 확정 · 검색 프롬프트 {kind} · 인터뷰 답 {len(prefs['answers'])}개", "info"
     if node == "filter_and_score":
         f = update["filter_log"]["funnel"]
         return "자격 필터", f"공고 {f['total']}건 중 {f['hard_pass']}건 통과", "info"
     if node == "search":
         s = update["search"]
-        hits = f" · 마스터키 일치 {s['master']['hits']}건 우선" if s.get("master") else ""
+        hits = f" · 핵심 사업 일치 {s['master']['hits']}건 우선" if s.get("master") else ""
         if s.get("path") == "semantic":
             return "공고 검색", f"의미 검색 완료 (메모리 벡터+BM25){hits}", "info"
         return "공고 검색", f"키워드 검색으로 대체{hits} ({s.get('reason') or '사유 없음'})", "warn"
@@ -99,6 +99,9 @@ def node_log(node: str, update) -> tuple[str, str, str] | None:
         if update["rag_status"] == "no_candidates":
             return "AI 순위", "후보 공고 없음", "warn"
         return "AI 순위", f"룰 순위로 대체 ({update['rag_status']})", "warn"
+    if node == "verify_recommendations" and (j := update["verification"].get("judge")) and j["status"] == "failed":
+        nxt = "4단계 재순위로" if j["next"] == "rag_recommend" else "재시도 한도 도달 → 불통과가 가장 적은 결과로 진행"
+        return "정답셋 판정", f"불통과 {len(j['fails'])}건 ({j['attempt']}회차) → {nxt}", "warn"
     if node == "verify_recommendations":
         v = update["verification"]
         if v["status"] == "passed":

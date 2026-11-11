@@ -100,8 +100,62 @@ def apply_verification(recs: list[dict], result: dict | None, reason: str | None
                  "flagged": flagged, "issues_dropped": dropped, "unchecked": len(result.get("unchecked", []))}
 
 
+# ---------- 정답셋 판정: 불통과면 비평 프롬프트를 만들어 4단계(공고서 근거 순위)로 되돌린다 ----------
+_GOLD: dict | None = None
+
+
+def load_gold(company_id: str | None) -> dict[str, dict]:
+    """정답셋 라벨 {공고번호: {label, reason, ...}}. 파일·라벨이 없으면 {}."""
+    global _GOLD
+    if not company_id:
+        return {}
+    if _GOLD is None:
+        try:
+            _GOLD = json.loads(settings.VERIFY_GOLD.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            _GOLD = {}
+    return {t["bidNtceNo"]: t for t in _GOLD.get(company_id, {}).get("tenders", []) if t.get("label")}
+
+
+def judge(recs: list[dict], gold: dict[str, dict]) -> list[dict]:
+    """검증까지 반영한 추천 목록을 정답셋 라벨과 비교 → 불통과 내용 [{bidNtceNo, kind, text}]. 비어 있으면 통과.
+    - 부적격 미검출: 정답셋 '부적격'인데 검증이 자격 문제(issue)를 찾지 못함
+    - 오탐: 정답셋 '추천·적격-비추천'인데 자격 문제로 표시함
+    - 순위 역전: 정답셋 '추천'이 '적격-비추천'보다 아래
+    라벨이 없는 공고는 비교하지 않는다."""
+    fails, labeled = [], [r for r in recs if r["bidNtceNo"] in gold]
+    for r in labeled:
+        g, flagged = gold[r["bidNtceNo"]], bool(r.get("verify", {}).get("issues"))
+        why = g.get("reason") or "-"
+        if g["label"] == "부적격" and not flagged:
+            fails.append({"bidNtceNo": r["bidNtceNo"], "kind": "부적격 미검출",
+                          "text": f"'{r['bidNtceNm']}'({r['rank']}위)는 정답셋 부적격(사유: {why})인데 자격 문제 없이 추천됨"})
+        elif g["label"] != "부적격" and flagged:
+            fails.append({"bidNtceNo": r["bidNtceNo"], "kind": "오탐",
+                          "text": f"'{r['bidNtceNm']}'는 정답셋 {g['label']}(사유: {why})인데 자격 문제로 표시됨"})
+    for i, r in enumerate(labeled):
+        above = [str(x["rank"]) for x in labeled[:i] if gold[x["bidNtceNo"]]["label"] == "적격-비추천"]
+        if gold[r["bidNtceNo"]]["label"] == "추천" and above:
+            fails.append({"bidNtceNo": r["bidNtceNo"], "kind": "순위 역전",
+                          "text": f"정답셋 추천 '{r['bidNtceNm']}'({r['rank']}위)가 적격-비추천 "
+                                  f"{'·'.join(above)}위보다 아래"})
+    return fails
+
+
+def _top_n() -> int:
+    return max(1, min(settings.VERIFY_TOP_N, 10))
+
+
+def _order_text(recs: list[dict]) -> str:
+    return "\n".join(f"- {r['rank']}위 {r['bidNtceNo']} {r['bidNtceNm']}"
+                     + (" (자격 문제 표시)" if r.get("verify", {}).get("issues") else "") for r in recs)
+
+
 def verify_recommendations(state: ProposalState, config: RunnableConfig):
-    recs, n = state["recommendations"], max(1, min(settings.VERIFY_TOP_N, 10))
+    """5단계 검증 에이전트: 상위 N건 재평가 → 정답셋으로 통과/불통과 판정.
+    불통과면 불통과 내용으로 비평 프롬프트를 만들어 verify_loop.pending에 넣는다 → Supervisor가 4단계로 되돌린다
+    (최대 VERIFY_MAX_RETRY회). 재시도를 다 써도 불통과면 지금까지 불통과가 가장 적었던 결과를 쓴다."""
+    recs, n = state["recommendations"], _top_n()
     dropped = 0
     if not settings.llm_enabled():
         result, reason = None, "LLM 키 없음"
@@ -116,5 +170,27 @@ def verify_recommendations(state: ProposalState, config: RunnableConfig):
         except Exception as e:  # 서브에이전트 예외는 그래프를 멈추지 않는다
             result, reason = None, f"예외: {type(e).__name__}"
     recs, verification = apply_verification(recs, result, reason, n, dropped)
+
+    loop = state.get("verify_loop") or {"attempt": 0, "history": [], "best": None}
+    attempt, gold = loop["attempt"], load_gold(state["company_profile"].get("업체ID"))
+    labeled = sum(r["bidNtceNo"] in gold for r in recs)
+    fails = judge(recs, gold) if settings.llm_enabled() and labeled else []
+    status = ("skipped" if not settings.llm_enabled() else "no_gold" if not labeled  # 라벨 없음 → 비교 기준이 없어 통과 처리
+              else "passed" if not fails else "failed")
+    best = loop.get("best")
+    if best is None or len(fails) <= best["fails"]:
+        best = {"attempt": attempt, "fails": len(fails), "recommendations": recs, "verification": verification}
+    pending, restored = None, None
+    if fails and attempt < settings.VERIFY_MAX_RETRY:
+        texts = [f"[{f['kind']}] {f['text']}" for f in fails]
+        pending = {"attempt": attempt + 1, "reasons": texts,
+                   "prompt": llm.critique_prompt(attempt + 1, texts, _order_text(recs))}
+    elif fails and best["attempt"] != attempt:  # 재시도 소진 → 불통과가 가장 적었던 회차로
+        recs, verification, restored = best["recommendations"], best["verification"], best["attempt"]
+    history = [*loop["history"], {"attempt": attempt, "status": status, "fails": len(fails)}]
+    verification = {**verification, "judge": {
+        "status": status, "attempt": attempt, "labeled": labeled, "fails": fails, "restored": restored,
+        "next": "rag_recommend" if pending else "select_tender", "history": history}}
     save(config, state, "recommended", recommendations=recs)
-    return {"recommendations": recs, "verification": verification}
+    return {"recommendations": recs, "verification": verification,
+            "verify_loop": {"attempt": attempt, "history": history, "best": best, "pending": pending}}

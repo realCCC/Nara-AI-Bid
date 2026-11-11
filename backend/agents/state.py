@@ -15,9 +15,9 @@ class ProposalState(TypedDict, total=False):
     tenders_path: str | None
     interview_questions: list[dict]
     interview_answers: dict
-    master_review: bool  # 인터뷰를 물어봤으면 마스터키도 확인받는다
+    master_review: bool  # 인터뷰를 물어봤으면 핵심 사업도 확인받는다
     master_draft: dict   # {"candidates": [{key, reason, prompt}], "source": llm|template}
-    prefs: dict          # 인터뷰 결과 + 확정 마스터키(master: {key, prompt, source, edited})
+    prefs: dict          # 인터뷰 결과 + 확정 핵심 사업(master: {key, prompt, source, edited})
     candidates: list[dict]
     search: dict
     filter_log: dict
@@ -27,6 +27,8 @@ class ProposalState(TypedDict, total=False):
     rag_status: str
     rag_chunk_search: dict  # {"paths": {공고번호: hybrid|bm25|none}, "query": 검색 문장}
     verification: dict
+    # 정답셋 판정 루프: {attempt, history, best(불통과가 가장 적은 회차), pending(4단계로 보낼 비평 프롬프트), critique}
+    verify_loop: dict
     selected_tender_id: str | None
     criteria: dict
     proposal_html: str
