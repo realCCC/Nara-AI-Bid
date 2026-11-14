@@ -99,4 +99,4 @@ LLM 키·임베딩·벡터 DB 중 무엇이 없어도 룰·BM25·기본값으로
 | 서버·화면 | FastAPI, Jinja2, SSE, 단일 HTML |
 | 개발 | Python 3.11, uv, pytest |
 
-실행 방법은 [README](README.md#️-실행)를 참고하세요.
+실행 방법은 [README](README.md#실행)를 참고하세요.
