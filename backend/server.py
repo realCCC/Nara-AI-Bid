@@ -134,6 +134,7 @@ def _step_event(node: str, update) -> dict | None:
     if node == "rag_recommend":
         critique = (update.get("verify_loop") or {}).get("critique")  # 5단계 불통과로 돌아온 재순위
         return {"node": node, "rag_status": update["rag_status"], "top": _brief(update["recommendations"]),
+                "branches": [b["perspective"] for b in update.get("rag_branches") or []],  # ToT 순위안 관점
                 "retry": {"attempt": critique["attempt"], "reasons": critique["reasons"]} if critique else None}
     if node == "verify_recommendations":
         return {"node": node, "verification": update["verification"], "top": _brief(update["recommendations"])}

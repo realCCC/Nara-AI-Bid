@@ -73,10 +73,11 @@ def confirm_issues(result: dict, by_no: dict[str, dict], company: dict,
 
 
 def apply_verification(recs: list[dict], result: dict | None, reason: str | None, n: int,
-                       dropped: int = 0) -> tuple[list[dict], dict]:
+                       dropped: int = 0, keep_order: bool = False) -> tuple[list[dict], dict]:
     """검증 결과 반영. 실패(result None)면 원순위 그대로 + 사유.
 
     순서는 LLM이 조정한 order를 따르되, 확인된 issue가 있는 공고는 검증 밖 공고(recs[n:])보다도 뒤로 보낸다.
+    keep_order(ToT 순위안)면 검증의 order 대신 순위안 순서를 그대로 두고 issue 공고만 뒤로 보낸다 — 검증은 평가자 역할.
     LLM이 재평가를 일부 빠뜨린 공고(result["unchecked"])는 verify 없이 그 자리에 둔다.
     """
     head = recs[:n]
@@ -85,7 +86,7 @@ def apply_verification(recs: list[dict], result: dict | None, reason: str | None
                       "flagged": 0, "issues_dropped": 0}
     by_no, items = {c["bidNtceNo"]: c for c in head}, {i["bidNtceNo"]: i for i in result["items"]}
     has_issue = lambda no: bool(items.get(no, {}).get("issues"))  # noqa: E731
-    order = sorted(result["order"], key=has_issue)  # 안정 정렬: issue 없는 공고 먼저
+    order = sorted(list(by_no) if keep_order else result["order"], key=has_issue)  # 안정 정렬: issue 없는 공고 먼저
     checked = {no: {**by_no[no], "verify": {"fit_score": items[no]["fit_score"], "comment": items[no]["comment"],
                                             "issues": items[no].get("issues", []),
                                             "rank_before": by_no[no]["rank"]}} if no in items else by_no[no]
@@ -100,46 +101,52 @@ def apply_verification(recs: list[dict], result: dict | None, reason: str | None
                  "flagged": flagged, "issues_dropped": dropped, "unchecked": len(result.get("unchecked", []))}
 
 
-# ---------- 정답셋 판정: 불통과면 비평 프롬프트를 만들어 4단계(공고서 근거 순위)로 되돌린다 ----------
-_GOLD: dict | None = None
+# ---------- 자체 점검: 4단계 순위를 5단계 검증 결과와 맞춰 보고, 어긋나면 비평 프롬프트로 4단계를 다시 돌린다 ----------
+# 정답셋은 평가 전용이다. 런타임 판정에 쓰면 라벨이 없는 실제 공고에서는 루프가 돌지 않고,
+# 비평에 정답 사유가 들어가 같은 정답셋으로 잰 KPI가 부풀려진다.
+FIT_GAP = 20  # 검증 적합도가 이만큼 높은 공고가 4단계에서 더 아래면 순위 역전
 
 
-def load_gold(company_id: str | None) -> dict[str, dict]:
-    """정답셋 라벨 {공고번호: {label, reason, ...}}. 파일·라벨이 없으면 {}."""
-    global _GOLD
-    if not company_id:
-        return {}
-    if _GOLD is None:
-        try:
-            _GOLD = json.loads(settings.VERIFY_GOLD.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            _GOLD = {}
-    return {t["bidNtceNo"]: t for t in _GOLD.get(company_id, {}).get("tenders", []) if t.get("label")}
-
-
-def judge(recs: list[dict], gold: dict[str, dict]) -> list[dict]:
-    """검증까지 반영한 추천 목록을 정답셋 라벨과 비교 → 불통과 내용 [{bidNtceNo, kind, text}]. 비어 있으면 통과.
-    - 부적격 미검출: 정답셋 '부적격'인데 검증이 자격 문제(issue)를 찾지 못함
-    - 오탐: 정답셋 '추천·적격-비추천'인데 자격 문제로 표시함
-    - 순위 역전: 정답셋 '추천'이 '적격-비추천'보다 아래
-    라벨이 없는 공고는 비교하지 않는다."""
-    fails, labeled = [], [r for r in recs if r["bidNtceNo"] in gold]
-    for r in labeled:
-        g, flagged = gold[r["bidNtceNo"]], bool(r.get("verify", {}).get("issues"))
-        why = g.get("reason") or "-"
-        if g["label"] == "부적격" and not flagged:
-            fails.append({"bidNtceNo": r["bidNtceNo"], "kind": "부적격 미검출",
-                          "text": f"'{r['bidNtceNm']}'({r['rank']}위)는 정답셋 부적격(사유: {why})인데 자격 문제 없이 추천됨"})
-        elif g["label"] != "부적격" and flagged:
-            fails.append({"bidNtceNo": r["bidNtceNo"], "kind": "오탐",
-                          "text": f"'{r['bidNtceNm']}'는 정답셋 {g['label']}(사유: {why})인데 자격 문제로 표시됨"})
-    for i, r in enumerate(labeled):
-        above = [str(x["rank"]) for x in labeled[:i] if gold[x["bidNtceNo"]]["label"] == "적격-비추천"]
-        if gold[r["bidNtceNo"]]["label"] == "추천" and above:
-            fails.append({"bidNtceNo": r["bidNtceNo"], "kind": "순위 역전",
-                          "text": f"정답셋 추천 '{r['bidNtceNm']}'({r['rank']}위)가 적격-비추천 "
-                                  f"{'·'.join(above)}위보다 아래"})
+def judge(recs: list[dict]) -> list[dict]:
+    """검증까지 반영한 추천 목록에서 4단계(LLM 순위)와 5단계(검증)가 어긋난 곳 → [{bidNtceNo, kind, text}]. 비면 통과.
+    - 자격 누락: 검증이 출처를 확인한 자격 문제(issue)가 있는데 4단계가 qualification_flags 없이 순위를 매김
+    - 근거 미확인: 4단계가 쓴 근거가 원문 대조에서 전부 탈락
+    - 순위 역전: 자격 문제 없는 공고끼리, 검증 적합도가 FIT_GAP 이상 높은 공고가 4단계에서 더 아래
+    검증 결과(verify)와 LLM 순위(llm)가 둘 다 있는 공고만 본다."""
+    fails, checked = [], [r for r in recs if r.get("verify") and r.get("llm")]
+    for r in checked:
+        v, l, name = r["verify"], r["llm"], r.get("bidNtceNm") or r["bidNtceNo"]
+        if v.get("issues") and not l.get("qualification_flags"):
+            fails.append({"bidNtceNo": r["bidNtceNo"], "kind": "자격 누락",
+                          "text": f"'{name}'(4단계 {l['rank']}위)는 검증에서 출처가 확인된 자격 문제가 나왔는데 "
+                                  f"자격 의심 없이 순위를 매김: {v['issues'][0].get('text', '')}"})
+        if not l.get("reasons") and l.get("dropped"):
+            fails.append({"bidNtceNo": r["bidNtceNo"], "kind": "근거 미확인",
+                          "text": f"'{name}'(4단계 {l['rank']}위)의 근거 {l['dropped']}개가 모두 원문 대조에 실패함"})
+    clean = sorted((r for r in checked if not r["verify"].get("issues")), key=lambda r: r["llm"]["rank"])
+    fit = lambda r: r["verify"]["fit_score"]  # noqa: E731
+    for j, lo in enumerate(clean):
+        above = [hi for hi in clean[:j] if fit(lo) - fit(hi) >= FIT_GAP]
+        if above:
+            fails.append({"bidNtceNo": lo["bidNtceNo"], "kind": "순위 역전",
+                          "text": f"'{lo.get('bidNtceNm') or lo['bidNtceNo']}'(4단계 {lo['llm']['rank']}위, "
+                                  f"검증 적합도 {fit(lo)})가 "
+                                  + "·".join(f"{hi['llm']['rank']}위(적합도 {fit(hi)})" for hi in above) + "보다 아래"})
     return fails
+
+
+def pick_branch(branches: list[dict], result: dict, reason: str | None, n: int, dropped: int):
+    """ToT: 순위안마다 검증 결과를 적용해 자체 점검 → 불통과가 가장 적은 안, 같으면 상위 3건 검증 적합도 합이 큰 안.
+    → (추천 목록, verification, 비교표). 검증 LLM은 한 번만 돈다 (공고별 issue·적합도는 순서와 무관)."""
+    scored = []
+    for b in branches:
+        recs, ver = apply_verification(b["recommendations"], result, reason, n, dropped, keep_order=True)
+        top_fit = sum(r.get("verify", {}).get("fit_score", 0) for r in recs[:3])
+        scored.append({"perspective": b["perspective"], "fails": len(judge(recs)), "top_fit": top_fit,
+                       "top3": [r["bidNtceNm"] for r in recs[:3]], "_recs": recs, "_ver": ver})
+    chosen = min(range(len(scored)), key=lambda i: (scored[i]["fails"], -scored[i]["top_fit"], i))
+    table = [{k: v for k, v in s.items() if not k.startswith("_")} | {"chosen": i == chosen} for i, s in enumerate(scored)]
+    return scored[chosen]["_recs"], {**scored[chosen]["_ver"], "changed": chosen != 0}, table
 
 
 def _top_n() -> int:
@@ -152,7 +159,7 @@ def _order_text(recs: list[dict]) -> str:
 
 
 def verify_recommendations(state: ProposalState, config: RunnableConfig):
-    """5단계 검증 에이전트: 상위 N건 재평가 → 정답셋으로 통과/불통과 판정.
+    """5단계 검증 에이전트: 상위 N건 재평가 → 4단계 순위와 맞춰 보는 자체 점검(judge)으로 통과/불통과 판정.
     불통과면 불통과 내용으로 비평 프롬프트를 만들어 verify_loop.pending에 넣는다 → Supervisor가 4단계로 되돌린다
     (최대 VERIFY_MAX_RETRY회). 재시도를 다 써도 불통과면 지금까지 불통과가 가장 적었던 결과를 쓴다."""
     recs, n = state["recommendations"], _top_n()
@@ -169,14 +176,18 @@ def verify_recommendations(state: ProposalState, config: RunnableConfig):
                 result, dropped = confirm_issues(result, by_no, state["company_profile"], chunks)
         except Exception as e:  # 서브에이전트 예외는 그래프를 멈추지 않는다
             result, reason = None, f"예외: {type(e).__name__}"
-    recs, verification = apply_verification(recs, result, reason, n, dropped)
+    branches, tot = state.get("rag_branches") or [], None
+    if result is not None and len(branches) > 1:  # ToT: 4단계 순위안 중 하나를 고른다
+        recs, verification, tot = pick_branch(branches, result, reason, n, dropped)
+        verification = {**verification, "tot": tot}
+    else:
+        recs, verification = apply_verification(recs, result, reason, n, dropped)
 
     loop = state.get("verify_loop") or {"attempt": 0, "history": [], "best": None}
-    attempt, gold = loop["attempt"], load_gold(state["company_profile"].get("업체ID"))
-    labeled = sum(r["bidNtceNo"] in gold for r in recs)
-    fails = judge(recs, gold) if settings.llm_enabled() and labeled else []
-    status = ("skipped" if not settings.llm_enabled() else "no_gold" if not labeled  # 라벨 없음 → 비교 기준이 없어 통과 처리
-              else "passed" if not fails else "failed")
+    attempt = loop["attempt"]
+    checked = sum(bool(r.get("verify") and r.get("llm")) for r in recs)  # 4단계 LLM 순위와 검증이 둘 다 있는 공고
+    fails = judge(recs) if checked else []
+    status = "skipped" if not checked else "passed" if not fails else "failed"  # 룰 순위·검증 생략이면 비교할 게 없음
     best = loop.get("best")
     if best is None or len(fails) <= best["fails"]:
         best = {"attempt": attempt, "fails": len(fails), "recommendations": recs, "verification": verification}
@@ -189,7 +200,7 @@ def verify_recommendations(state: ProposalState, config: RunnableConfig):
         recs, verification, restored = best["recommendations"], best["verification"], best["attempt"]
     history = [*loop["history"], {"attempt": attempt, "status": status, "fails": len(fails)}]
     verification = {**verification, "judge": {
-        "status": status, "attempt": attempt, "labeled": labeled, "fails": fails, "restored": restored,
+        "status": status, "attempt": attempt, "checked": checked, "fails": fails, "restored": restored,
         "next": "rag_recommend" if pending else "select_tender", "history": history}}
     save(config, state, "recommended", recommendations=recs)
     return {"recommendations": recs, "verification": verification,

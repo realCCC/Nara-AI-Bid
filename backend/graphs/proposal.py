@@ -1,6 +1,6 @@
 """인터뷰(HITL ⓪) → 핵심 사업·검색 프롬프트 확인(HITL) → SC-001 → HITL ① → SC-002 그래프. Supervisor는 규칙 기반(비어 있는 단계로 분기).
 
-Supervisor → 추천 Worker 서브그래프(필터 → 검색 → 리랭크) → RAG 순위·근거(4단계) → 검증 서브에이전트(5단계, 정답셋 판정)
+Supervisor → 추천 Worker 서브그래프(필터 → 검색 → 리랭크) → RAG 순위·근거(4단계) → 검증 서브에이전트(5단계, 4단계 순위와 맞춰 보는 자체 점검)
   ─ 통과 → 선택 → 초안
   └ 불통과 → 불통과 내용으로 만든 비평 프롬프트를 들고 4단계로 되돌아가 다시 순위 → 5단계 (최대 2회)
 Worker 노드는 backend/agents/에 에이전트별 파일로 둔다. 이 파일은 Supervisor와 그래프 조립만.
@@ -56,7 +56,7 @@ def route(state: ProposalState) -> str:  # 규칙 기반: 비어 있는 단계�
         return "verify_recommendations"
     if not state.get("selected_tender_id"):
         if (state.get("verify_loop") or {}).get("pending"):
-            return "rag_recommend"  # 정답셋 불통과 → 비평 프롬프트로 4단계 재순위
+            return "rag_recommend"  # 자체 점검 불통과 → 비평 프롬프트로 4단계 재순위
         return "select_tender"
     if "criteria" not in state:
         return "extract_criteria"
