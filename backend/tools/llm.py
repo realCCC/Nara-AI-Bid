@@ -309,16 +309,16 @@ VERIFY_PROMPT = """당신은 추천 결과를 다시 확인하는 검증 담당�
 
 CRITIQUE_PROMPT = """
 
-[검증 불통과 비평 — 재순위 {attempt}회차]
-직전 추천은 검증 단계에서 정답셋과 달라 불통과했습니다. 아래 불통과 내용을 하나씩 반영해 모든 후보의 순위를 다시 매기세요.
+[자체 점검 불통과 — 재순위 {attempt}회차]
+직전 순위를 검증 단계 결과와 맞춰 보니 아래 문제가 있었습니다. 하나씩 다시 확인해 모든 후보의 순위를 다시 매기세요.
 {reasons}
 [직전 추천 순위]
 {previous}
 재순위 규칙:
-- 정답셋에서 부적격인 공고는 그 사유에 해당하는 참가조건을 공고 필드·청크에서 찾아 qualification_flags에 적고 아래로 내리세요.
-- 정답셋에서 참가 가능한 공고에 적었던 qualification_flags는 근거를 다시 대조하고, 충돌이 아니면 빼세요.
-- 정답셋 '추천' 공고가 '적격-비추천' 공고보다 위에 오게 하세요.
-- 근거(reasons)는 여전히 입력에 있는 원문·필드로만 쓰세요. 위 비평 문장을 근거로 인용하지 마세요."""
+- 자격 누락: 그 참가조건을 공고 필드·청크에서 직접 찾아 보세요. 확인되면 qualification_flags에 적고 아래로 내리세요. 확인되지 않으면 적지 마세요.
+- 근거 미확인: 근거는 청크 원문을 글자 그대로 인용(quote)하거나 공고·업체 필드 값을 그대로 적으세요.
+- 순위 역전: 두 공고의 과업 내용과 업체 역량을 다시 비교하세요. 다시 봐도 직전 판단이 맞으면 순위를 유지해도 됩니다.
+- 근거(reasons)는 입력에 있는 원문·필드로만 쓰세요. 위 점검 문장을 근거로 인용하지 마세요."""
 
 
 def critique_prompt(attempt: int, reasons: list[str], previous: str) -> str:
@@ -379,9 +379,21 @@ def _chunks_text(chunks: list[dict]) -> str:
                      + f" {c['text']}" for c in chunks)
 
 
+# ToT: 4단계 순위안을 관점별로 여러 개 만든다 → 5단계 검증 결과로 각 안을 점검(judge)해 가장 나은 안을 고른다.
+# 순위 기준 1(참가자격)은 모든 관점에 그대로 두고, 2~4 중 무엇을 더 무겁게 볼지만 바꾼다.
+TOT_PERSPECTIVES = [
+    ("기본", ""),
+    ("실적 유사도 우선", "\n\n[이번 순위안의 관점: 실적 유사도 우선]\n참가자격 충돌이 없는 공고끼리는 업체 과거 실적·보유 인력과 "
+                    "과업이 얼마나 비슷한지를 핵심 사업 일치보다 먼저 보세요. 다른 규칙은 그대로입니다."),
+    ("과업 적합도 우선", "\n\n[이번 순위안의 관점: 과업 적합도 우선]\n참가자격 충돌이 없는 공고끼리는 공고서 청크에 적힌 과업 범위·"
+                    "수행 내용이 검색프롬프트·역량 키워드와 얼마나 맞는지를 가장 무겁게 보세요. 다른 규칙은 그대로입니다."),
+]
+
+
 def rag_rank(company: dict, candidates: list[dict], chunks_by_tender: dict[str, list[dict]],
-             tenders: dict[str, dict], critique: str | None = None) -> list[dict] | None:
-    """critique: 검증(5단계) 불통과 시 비평 프롬프트 (critique_prompt). 순위 프롬프트 뒤에 붙여 다시 순위를 매긴다."""
+             tenders: dict[str, dict], critique: str | None = None, perspective: str = "") -> list[dict] | None:
+    """critique: 검증(5단계) 불통과 시 비평 프롬프트 (critique_prompt). 순위 프롬프트 뒤에 붙여 다시 순위를 매긴다.
+    perspective: ToT 순위안의 관점 문구 (TOT_PERSPECTIVES)."""
     fields = ("bidNtceNm", "pubPrcrmntLrgClsfcNm", "pubPrcrmntClsfcNo", "pubPrcrmntClsfcNm", "asignBdgtAmt",
               "cntrctCnclsMthdNm", "bidPrtcptLmtYn", "rgnLmtBidLocplcJdgmBssNm")
     blocks = []
@@ -391,7 +403,7 @@ def rag_rank(company: dict, candidates: list[dict], chunks_by_tender: dict[str, 
                                   "fields": {f: t.get(f, "") for f in fields}}, ensure_ascii=False)
                       + "\n청크:\n" + (_chunks_text(chunks_by_tender.get(c["bidNtceNo"], [])) or "(PDF 근거 없음)"))
     result = _invoke(RankResult, RANK_PROMPT.format(quote_rule=QUOTE_RULE, company=json.dumps(company, ensure_ascii=False),
-                                                    candidates="\n\n".join(blocks)) + (critique or ""))
+                                                    candidates="\n\n".join(blocks)) + perspective + (critique or ""))
     if result is None:
         return None
     ids = {c["bidNtceNo"] for c in candidates}

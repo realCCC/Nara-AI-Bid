@@ -980,7 +980,7 @@ const PROGRESS_STEPS = [  // [이 노드가 끝나면, 진행률, 진행 중인 
   ["search", 40, "st3", "리랭커가 상위 후보를 다시 정렬하는 중"],
   ["rerank", 55, "st4", "상위 공고 PDF를 읽고 LLM이 근거와 함께 순위를 매기는 중"],
   ["rag_recommend", 85, "st5", "검증 에이전트가 상위 후보의 참가 자격을 다시 확인하는 중"],
-  ["verify_recommendations", 98, null, "결과 정리 중 (정답셋 불통과면 4단계로 되돌아가 다시 순위)"],
+  ["verify_recommendations", 98, null, "결과 정리 중 (자체 점검 불통과면 4단계로 되돌아가 다시 순위)"],
 ];
 const STAGE_OF = { review_master: "st1", filter_and_score: "st2", search: "st3", rerank: "st3", rag_recommend: "st4",
                    verify_recommendations: "st5" };  // 스트림 노드 → 단계 (search·rerank는 3단계 안에 둘 다)
@@ -1054,13 +1054,13 @@ function renderLive(ev, sec) {
        <details><summary>RRF 상위 ${ev.top.length}건</summary>${briefList(ev.top, t => `<span class="mono">${fmt(t.rrf, 4)}</span>`)}</details>`],
     rerank: () => ["ai", `<b>리랭크</b> 상위 ${ev.top.length}건 선별 ${ev.rerank === "applied" ? "· 리랭커 적용" : '<span class="tag gray">리랭크 생략</span>'}`,
       `<details><summary>후보 ${ev.top.length}건 (공고서 근거 순위 전)</summary>${briefList(ev.top, () => "")}</details>`],
-    rag_recommend: () => ["ai", `<b>공고서 근거 순위${ev.retry ? ` · 재순위 ${ev.retry.attempt}회차` : ""}</b> ${ev.rag_status === "llm" ? (ev.retry ? "5단계 불통과 내용을 비평 프롬프트로 받아 다시 순위를 매김" : "AI가 공고서 PDF 근거로 순위를 다시 매김") : esc(RAG_LABEL[ev.rag_status] || ev.rag_status)}`,
+    rag_recommend: () => ["ai", `<b>공고서 근거 순위${ev.retry ? ` · 재순위 ${ev.retry.attempt}회차` : ""}</b> ${ev.rag_status === "llm" ? (ev.retry ? "5단계 불통과 내용을 비평 프롬프트로 받아 다시 순위를 매김" : "AI가 공고서 PDF 근거로 순위를 다시 매김") : esc(RAG_LABEL[ev.rag_status] || ev.rag_status)}${ev.branches && ev.branches.length ? ` · 순위안 ${ev.branches.length}개 (${ev.branches.map(esc).join(" · ")})` : ""}`,
       `${ev.retry ? `<details><summary>전달된 불통과 내용 ${ev.retry.reasons.length}건</summary><ul>${ev.retry.reasons.map(t => `<li>${esc(t)}</li>`).join("")}</ul></details>` : ""}
        <details><summary>순위 ${ev.top.length}건</summary>${briefList(ev.top, () => "")}</details>`],
     verify_recommendations: () => {
       const v = ev.verification;
       return ["ai", `<b>추천 검증</b> ${v.status === "passed" ? `상위 ${v.checked}건 재평가 · ${v.changed ? "순위 조정" : "순위 유지"}${v.flagged ? ` · 자격 의심 ${v.flagged}건` : ""}` : `생략 (${esc(v.reason || "-")})`} ${judgeTag(v.judge)}`,
-        failList(v.judge)];
+        totList(v.tot) + failList(v.judge)];
     },
   }[ev.node];
   if (!L) return;
@@ -1072,12 +1072,19 @@ function renderLive(ev, sec) {
   if (last) last.open = true;
 }
 
-// 5단계 정답셋 판정: 통과/불통과 표시 + 불통과 내용 (불통과면 이 내용이 비평 프롬프트로 4단계에 전달된다)
-const JUDGE_LABEL = { passed: "정답셋 통과", failed: "정답셋 불통과", no_gold: "정답셋 라벨 없음 · 통과 처리", skipped: "" };
+// 5단계 자체 점검(4단계 순위 ↔ 검증 결과): 통과/불통과 표시 + 불통과 내용 (불통과면 이 내용이 비평 프롬프트로 4단계에 전달된다)
+const JUDGE_LABEL = { passed: "자체 점검 통과", failed: "자체 점검 불통과", skipped: "" };
 function judgeTag(j) {
   if (!j || !JUDGE_LABEL[j.status]) return "";
   return `<span class="tag ${j.status === "failed" ? "warn" : "llm"}">${JUDGE_LABEL[j.status]}</span>${j.status === "failed"
     ? (j.next === "rag_recommend" ? " → 4단계로 되돌려 다시 순위" : ` · 재시도 한도 도달${j.restored != null ? ` → ${j.restored}회차 결과 사용` : ""}`) : ""}`;
+}
+// ToT: 4단계 순위안별 자체 점검 결과 (불통과 적은 순 → 상위 3건 검증 적합도 합 큰 순으로 하나를 고름)
+function totList(tot) {
+  if (!tot || !tot.length) return "";
+  const pick = tot.find(t => t.chosen);
+  return `<details><summary>순위안 ${tot.length}개 비교 → '${esc(pick.perspective)}' 선택</summary><ul>${tot.map(t =>
+    `<li>${t.chosen ? '<span class="tag llm">선택</span> ' : ""}<b>${esc(t.perspective)}</b> · 점검 불통과 ${t.fails}건 · 상위 3건 적합도 합 ${t.top_fit}<br>${t.top3.map(esc).join(" / ")}</li>`).join("")}</ul></details>`;
 }
 function failList(j) {
   if (!j || !j.fails || !j.fails.length) return "";

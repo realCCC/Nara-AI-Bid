@@ -95,17 +95,19 @@ def node_log(node: str, update) -> tuple[str, str, str] | None:
     if node == "rag_recommend":
         n = len(update["recommendations"])
         if update["rag_status"] == "llm":
-            return "AI 순위", f"{n}건 순위·근거 작성", "info"
+            views = [b["perspective"] for b in update.get("rag_branches") or []]
+            return "AI 순위", f"{n}건 순위·근거 작성" + (f" · 순위안 {len(views)}개({', '.join(views)})" if views else ""), "info"
         if update["rag_status"] == "no_candidates":
             return "AI 순위", "후보 공고 없음", "warn"
         return "AI 순위", f"룰 순위로 대체 ({update['rag_status']})", "warn"
     if node == "verify_recommendations" and (j := update["verification"].get("judge")) and j["status"] == "failed":
         nxt = "4단계 재순위로" if j["next"] == "rag_recommend" else "재시도 한도 도달 → 불통과가 가장 적은 결과로 진행"
-        return "정답셋 판정", f"불통과 {len(j['fails'])}건 ({j['attempt']}회차) → {nxt}", "warn"
+        return "자체 점검", f"불통과 {len(j['fails'])}건 ({j['attempt']}회차) → {nxt}", "warn"
     if node == "verify_recommendations":
         v = update["verification"]
         if v["status"] == "passed":
+            pick = next((t for t in v.get("tot") or [] if t["chosen"]), None)  # ToT로 고른 순위안
             return ("추천 검증", f"상위 {v['checked']}건 재평가 · {'순위 조정' if v['changed'] else '순위 유지'}"
-                    f" · 자격 의심 {v['flagged']}건", "info")
+                    f" · 자격 의심 {v['flagged']}건" + (f" · 순위안 '{pick['perspective']}' 선택" if pick else ""), "info")
         return "추천 검증", f"검증 생략 ({v.get('reason') or '사유 없음'})", "warn"
     return None

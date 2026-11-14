@@ -42,14 +42,16 @@ PGVECTOR_DSN = os.getenv("PGVECTOR_DSN", "postgresql://postgres:postgres@localho
 BODY_SEARCH = os.getenv("BODY_SEARCH", "0") == "1"
 BODY_TOP = int(os.getenv("BODY_TOP", "3"))
 QUERY_CACHE = _path("QUERY_CACHE", "data/query_cache.json")  # 업체 프로필별 LLM 검색 문장 (실행마다 바뀌지 않게 고정)
-VERIFY_GOLD = _path("VERIFY_GOLD", "data/eval/verify_gold.json")  # 검증 정답셋 (추천/적격-비추천/부적격 라벨)
+VERIFY_GOLD = _path("VERIFY_GOLD", "data/eval/verify_gold.json")  # 검증 정답셋 (평가 스크립트 전용, 런타임 판정에는 쓰지 않음)
 EMB_CACHE = _path("EMB_CACHE", "data/emb_cache.npz")  # 공고 문서 벡터 디스크 캐시 (CPU 443건 첫 계산 약 2-3분)
 SCORE_WEIGHTS = tuple(float(w) for w in os.getenv("SCORE_WEIGHTS", "0.35,0.30,0.20,0.15").split(","))
 TOP_K = int(os.getenv("TOP_K", "10"))
 # 검증 서브에이전트가 재평가할 상위 건수 (1~10). 확인된 부적격은 맨 뒤로 빠지므로, 빈자리를 채우는 공고도 검증되게 상위 10건 전체
 VERIFY_TOP_N = int(os.getenv("VERIFY_TOP_N", "10"))
-# 검증(5단계)이 정답셋 기준 불통과면 비평 프롬프트로 공고서 근거 순위(4단계)를 다시 돌리는 최대 횟수 (0~2)
+# 검증(5단계) 결과와 4단계 순위가 어긋나면(자체 점검 불통과) 비평 프롬프트로 공고서 근거 순위(4단계)를 다시 돌리는 최대 횟수 (0~2)
 VERIFY_MAX_RETRY = max(0, min(int(os.getenv("VERIFY_MAX_RETRY", "2")), 2))
+# ToT: 4단계 순위안을 관점별로 몇 개 만들지 (1이면 끔, 최대 3). 5단계 검증 결과로 가장 나은 안을 고른다
+TOT_BRANCHES = max(1, min(int(os.getenv("TOT_BRANCHES", "3")), 3))
 FETCH_PDFS = os.getenv("FETCH_PDFS", "1") == "1"
 
 LLM_TIMEOUT = float(os.getenv("LLM_TIMEOUT", "60"))

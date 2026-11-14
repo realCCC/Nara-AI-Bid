@@ -27,8 +27,9 @@ class ProposalState(TypedDict, total=False):
     rag_status: str
     rag_chunk_search: dict  # {"paths": {공고번호: hybrid|bm25|none}, "query": 검색 문장}
     verification: dict
-    # 정답셋 판정 루프: {attempt, history, best(불통과가 가장 적은 회차), pending(4단계로 보낼 비평 프롬프트), critique}
+    # 자체 점검 루프: {attempt, history, best(불통과가 가장 적은 회차), pending(4단계로 보낼 비평 프롬프트), critique}
     verify_loop: dict
+    rag_branches: list[dict]  # ToT 순위안 [{perspective, recommendations}] (5단계가 검증 결과로 하나를 고른다)
     selected_tender_id: str | None
     criteria: dict
     proposal_html: str

@@ -673,48 +673,62 @@ def test_llm_query_persisted(monkeypatch, tmp_path):
     assert recommend.make_query(company) == ("질의1", "llm") and len(calls) == 1
 
 
-# ---------- 5단계 정답셋 판정 → 불통과면 비평 프롬프트로 4단계 재순위 (최대 2회) ----------
-GOLD3 = {"T1": {"label": "적격-비추천"}, "T2": {"label": "추천"}, "T3": {"label": "부적격", "reason": "지역제한(부산)"}}
-
-
-def _recs(order, flagged=()):
+# ---------- 5단계 자체 점검(4단계 순위 ↔ 검증 결과) → 불통과면 비평 프롬프트로 4단계 재순위 (최대 2회) ----------
+def _recs(order, flagged=(), rag_flags=(), fit=None, dropped=()):
+    """검증까지 반영된 추천 목록. flagged: 검증 issue, rag_flags: 4단계 qualification_flags, dropped: 근거 전부 탈락."""
+    fit = fit or {}
     return [{"bidNtceNo": no, "bidNtceNm": f"공고{no}", "rank": i,
-             **({"verify": {"issues": [_issue()]}} if no in flagged else {})} for i, no in enumerate(order, 1)]
+             "llm": {"rank": i, "reasons": [] if no in dropped else [{"text": "r"}], "dropped": 2 if no in dropped else 0,
+                     "qualification_flags": ["지역제한"] if no in rag_flags else []},
+             "verify": {"fit_score": fit.get(no, 80), "issues": [_issue()] if no in flagged else []}}
+            for i, no in enumerate(order, 1)]
 
 
-def test_judge_against_gold():
+def test_judge_self_check():
     from backend.agents.verify import judge
 
-    assert judge(_recs(["T2", "T1", "T3"], flagged={"T3"}), GOLD3) == []  # 라벨과 일치 → 통과
-    fails = judge(_recs(["T1", "T2", "T3"]), GOLD3)
-    assert [(f["bidNtceNo"], f["kind"]) for f in fails] == [("T3", "부적격 미검출"), ("T2", "순위 역전")]
-    assert "지역제한(부산)" in fails[0]["text"]
-    assert [f["kind"] for f in judge(_recs(["T2", "T1", "T3"], flagged={"T2", "T3"}), GOLD3)] == ["오탐"]
-    assert judge(_recs(["T9"]), GOLD3) == []  # 라벨 없는 공고는 비교하지 않음
+    assert judge(_recs(["T1", "T2", "T3"], flagged={"T3"}, rag_flags={"T3"})) == []  # 4단계와 검증이 일치 → 통과
+    fails = judge(_recs(["T1", "T2", "T3"], flagged={"T3"}))
+    assert [(f["bidNtceNo"], f["kind"]) for f in fails] == [("T3", "자격 누락")]
+    assert "부산 소재 업체만" in fails[0]["text"]  # 비평에는 정답 라벨이 아니라 검증이 찾은 issue가 들어간다
+    fails = judge(_recs(["T1", "T2"], fit={"T1": 50, "T2": 75}))
+    assert [(f["bidNtceNo"], f["kind"]) for f in fails] == [("T2", "순위 역전")]
+    assert judge(_recs(["T1", "T2"], fit={"T1": 60, "T2": 75})) == []  # 차이가 FIT_GAP 미만이면 통과
+    assert [f["kind"] for f in judge(_recs(["T1"], dropped={"T1"}))] == ["근거 미확인"]
+    assert judge([{"bidNtceNo": "T9", "rank": 1}]) == []  # 룰 순위(llm 없음)·검증 밖 공고는 보지 않음
 
 
-def _loop(monkeypatch, gold, rank_orders):
-    """그래프와 같은 순서로 4단계(RAG) ↔ 5단계(검증)를 돈다. rank_orders: RAG 호출마다 낼 순위."""
+def _loop(monkeypatch, rank_orders, fit=None, tot=None):
+    """그래프와 같은 순서로 4단계(RAG) ↔ 5단계(검증)를 돈다.
+    rank_orders: RAG 호출마다 낼 (순위, qualification_flags를 붙일 공고). 검증은 매번 T3에만 issue를 낸다.
+    tot: {관점 이름: (순위, 플래그 공고)} — 주면 첫 4단계가 ToT 순위안을 관점 수만큼 만든다 (재순위는 rank_orders)."""
     from backend.agents import rag, verify
     from backend.graphs.proposal import route
 
-    calls = []
+    calls, fit = [], fit or {}
 
-    def fake_rag_rank(company, top, chunks, by_no, critique=None):
-        calls.append(critique)
-        order = rank_orders[min(len(calls) - 1, len(rank_orders) - 1)]
-        return [{"rank": i, "bidNtceNo": no, "reasons": [], "qualification_flags": []} for i, no in enumerate(order, 1)]
+    def fake_rag_rank(company, top, chunks, by_no, critique=None, perspective=""):
+        name = next(n for n, text in llm.TOT_PERSPECTIVES if text == perspective)
+        if tot and critique is None:  # ToT 첫 순위: 관점별 순위안 (스레드에서 동시에 불린다)
+            order, flags = tot[name]
+        else:
+            calls.append(critique)
+            order, flags = rank_orders[min(len(calls) - 1, len(rank_orders) - 1)]
+        return [{"rank": i, "bidNtceNo": no, "reasons": [], "qualification_flags": ["지역제한"] if no in flags else []}
+                for i, no in enumerate(order, 1)]
 
     def fake_verify(company, cands, by_no, chunks):
         ids = [c["bidNtceNo"] for c in cands]
         res = _result(ids)
         for it in res["items"]:  # T3에만 자격 issue (출처 대조는 생략)
             it["issues"] = [_issue()] if it["bidNtceNo"] == "T3" else []
+            it["fit_score"] = fit.get(it["bidNtceNo"], 80)
         return res, None
 
     monkeypatch.setattr(config, "llm_enabled", lambda: True)
     monkeypatch.setattr(config, "VERIFY_TOP_N", 3)
     monkeypatch.setattr(config, "VERIFY_MAX_RETRY", 2)
+    monkeypatch.setattr(config, "TOT_BRANCHES", len(tot) if tot else 1)
     by_no = {r["bidNtceNo"]: {"bidNtceNo": r["bidNtceNo"]} for r in RECS}
     for mod in (rag, verify):
         monkeypatch.setattr(mod, "tenders", lambda state: by_no)
@@ -730,7 +744,6 @@ def _loop(monkeypatch, gold, rank_orders):
     monkeypatch.setattr(verify.llm, "verify_ranking", fake_verify)
     monkeypatch.setattr(verify, "qualification_chunks", lambda head, b: {})
     monkeypatch.setattr(verify, "confirm_issues", lambda result, *a: (result, 0))
-    monkeypatch.setattr(verify, "load_gold", lambda cid: gold)
     monkeypatch.setattr(verify, "save", lambda *a, **k: None)
 
     top = [{**r, "soft_score": 50, "reasons": []} for r in RECS[:3]]
@@ -743,33 +756,63 @@ def _loop(monkeypatch, gold, rank_orders):
     return state, steps, calls
 
 
-def test_gold_pass_goes_to_select(monkeypatch):
-    state, steps, calls = _loop(monkeypatch, GOLD3, [["T2", "T1", "T3"]])
+def test_self_check_pass_goes_to_select(monkeypatch):
+    state, steps, calls = _loop(monkeypatch, [(["T1", "T2", "T3"], {"T3"})])
     assert steps == ["rag_recommend", "verify_recommendations"] and calls == [None]
     assert state["verification"]["judge"]["status"] == "passed"
 
 
-def test_gold_fail_returns_to_rag_with_critique(monkeypatch):
-    """불통과면 불통과 내용이 담긴 비평 프롬프트로 4단계 재순위 → 5단계 재검증. 통과하면 멈춘다."""
-    state, steps, calls = _loop(monkeypatch, GOLD3, [["T1", "T2", "T3"], ["T2", "T1", "T3"]])
+def test_self_check_fail_returns_to_rag_with_critique(monkeypatch):
+    """4단계가 자격 문제를 놓치면 그 issue가 담긴 비평 프롬프트로 재순위 → 재검증. 맞으면 멈춘다."""
+    state, steps, calls = _loop(monkeypatch, [(["T3", "T1", "T2"], set()), (["T1", "T2", "T3"], {"T3"})])
     assert steps == ["rag_recommend", "verify_recommendations"] * 2
-    assert calls[0] is None and "순위 역전" in calls[1] and "재순위 1회차" in calls[1]
+    assert calls[0] is None and "자격 누락" in calls[1] and "재순위 1회차" in calls[1]
+    assert "정답셋" not in calls[1]
     j = state["verification"]["judge"]
     assert j["status"] == "passed" and j["attempt"] == 1 and [h["fails"] for h in j["history"]] == [1, 0]
-    assert [r["bidNtceNo"] for r in state["recommendations"]] == ["T2", "T1", "T3"]
+    assert [r["bidNtceNo"] for r in state["recommendations"]] == ["T1", "T2", "T3"]
 
 
-def test_gold_fail_stops_after_two_and_keeps_best(monkeypatch):
+def test_self_check_rank_inversion(monkeypatch):
+    state, steps, calls = _loop(monkeypatch, [(["T1", "T2", "T3"], {"T3"}), (["T2", "T1", "T3"], {"T3"})],
+                                fit={"T1": 50, "T2": 90})
+    assert steps == ["rag_recommend", "verify_recommendations"] * 2 and "순위 역전" in calls[1]
+    assert state["verification"]["judge"]["status"] == "passed"
+
+
+def test_self_check_stops_after_two_and_keeps_best(monkeypatch):
     """계속 불통과여도 4단계 재순위는 최대 2회. 재시도를 다 쓰면 불통과가 가장 적은 회차 결과를 쓴다."""
-    gold = {"T1": {"label": "적격-비추천"}, "T2": {"label": "추천"}, "T3": {"label": "추천"}}  # T3 오탐은 매번 남음
-    state, steps, calls = _loop(monkeypatch, gold, [["T1", "T2", "T3"], ["T2", "T1", "T3"], ["T1", "T2", "T3"]])
+    fit = {"T1": 50, "T2": 90}  # T2가 T1보다 아래면 순위 역전, T3 플래그 누락이면 자격 누락
+    state, steps, calls = _loop(monkeypatch, [(["T1", "T2", "T3"], set()), (["T2", "T1", "T3"], set()),
+                                              (["T1", "T2", "T3"], set())], fit=fit)
     assert steps == ["rag_recommend", "verify_recommendations"] * 3 and len(calls) == 3
     j = state["verification"]["judge"]
     assert j["status"] == "failed" and j["attempt"] == 2 and j["next"] == "select_tender"
     assert j["restored"] == 1 and [r["bidNtceNo"] for r in state["recommendations"]][:2] == ["T2", "T1"]
 
 
-def test_no_gold_passes(monkeypatch):
-    state, steps, _ = _loop(monkeypatch, {}, [["T1", "T2", "T3"]])
-    assert steps == ["rag_recommend", "verify_recommendations"]
-    assert state["verification"]["judge"]["status"] == "no_gold"
+# ---------- ToT: 4단계 순위안을 관점별로 만들고 5단계 검증 결과(한 번)로 하나를 고른다 ----------
+def test_tot_picks_branch_with_fewest_fails(monkeypatch):
+    tot = {"기본": (["T3", "T1", "T2"], set()),           # T3 자격 문제를 놓침 → 자격 누락 1건
+           "실적 유사도 우선": (["T1", "T2", "T3"], {"T3"}),  # 불통과 0건
+           "과업 적합도 우선": (["T2", "T1", "T3"], {"T3"})}  # 불통과 0건, 적합도 합 같음 → 앞선 관점이 이김
+    state, steps, calls = _loop(monkeypatch, [], tot=tot)
+    assert steps == ["rag_recommend", "verify_recommendations"] and calls == []  # 재순위 없이 끝남
+    v = state["verification"]
+    assert [t["fails"] for t in v["tot"]] == [1, 0, 0]
+    assert [t["perspective"] for t in v["tot"] if t["chosen"]] == ["실적 유사도 우선"]
+    assert [r["bidNtceNo"] for r in state["recommendations"]] == ["T1", "T2", "T3"]  # 고른 순위안 순서 그대로
+    assert v["judge"]["status"] == "passed" and v["changed"]
+
+
+def test_tot_all_fail_falls_back_to_critique(monkeypatch):
+    """순위안이 모두 불통과면 가장 나은 안으로 비평 재순위 루프에 들어간다. 재순위는 1개만 만든다."""
+    tot = {"기본": (["T1", "T2", "T3"], set()), "실적 유사도 우선": (["T2", "T1", "T3"], set())}
+    state, steps, calls = _loop(monkeypatch, [(["T1", "T2", "T3"], {"T3"})], tot=tot)
+    assert steps == ["rag_recommend", "verify_recommendations"] * 2 and len(calls) == 1 and "자격 누락" in calls[0]
+    assert state["verification"]["judge"]["status"] == "passed" and "tot" not in state["verification"]
+
+
+def test_tot_off_keeps_single_rank(monkeypatch):
+    state, steps, calls = _loop(monkeypatch, [(["T1", "T2", "T3"], {"T3"})])
+    assert calls == [None] and "tot" not in state["verification"] and not state["rag_branches"]
