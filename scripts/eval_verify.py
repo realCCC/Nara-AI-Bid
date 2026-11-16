@@ -46,6 +46,11 @@ def precision_at(order: list[str], gold: dict[str, str], k: int = 3) -> float | 
     return sum(gold[no] == "추천" for no in head) / len(head) if head else None
 
 
+def hit_at(order: list[str], gold: dict[str, str], k: int = 3) -> bool:
+    """상위 k건 안에 '추천' 라벨 공고가 1건 이상 있는가 (담당자는 1건만 고르므로)."""
+    return any(gold.get(no) == "추천" for no in order[:k])
+
+
 def bad_below(order: list[str], gold: dict[str, str]) -> tuple[int, int]:
     """(부적격, 부적격 아닌 공고) 쌍 중 부적격이 아래에 있는 쌍 수, 전체 쌍 수.
     부적격이 이미 맨 아래면 더 내려갈 수 없어 '강등률'은 왜곡되므로 쌍 단위로 본다."""
@@ -61,6 +66,7 @@ def company_metrics(before: list[str], after: list[str], flagged: set[str], gold
     (ok_b, pairs), (ok_a, _) = bad_below(before, gold), bad_below(after, gold)
     return {"ndcg_before": ndcg(before, gold), "ndcg_after": ndcg(after, gold),
             "p3_before": precision_at(before, gold), "p3_after": precision_at(after, gold),
+            "hit_before": hit_at(before, gold), "hit_after": hit_at(after, gold),
             "bad": len(bad), "pairs": pairs, "below_before": ok_b, "below_after": ok_a,
             "flagged": len(flagged), "flagged_bad": len(flagged & bad), "changed": before != after}
 
@@ -75,6 +81,7 @@ def summarize(rows: list[dict]) -> dict:
     return {"companies": len(rows),
             "nDCG@N": {"before": mean("ndcg_before"), "after": mean("ndcg_after")},
             "P@3": {"before": mean("p3_before"), "after": mean("p3_after")},
+            "Hit Rate@3": {"before": mean("hit_before"), "after": mean("hit_after")},
             "부적격 하위 배치율": {"before": ratio(total("below_before"), total("pairs")),
                              "after": ratio(total("below_after"), total("pairs"))},
             "플래그 정밀도": ratio(total("flagged_bad"), total("flagged")),

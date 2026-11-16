@@ -157,6 +157,27 @@ def test_conflicts_only_qualification_fields():
     assert not _conflicts({"company_field": "중소기업여부", "company_value": "True"}, {"중소기업여부": True})  # '소기업 확인 불가' 오탐
 
 
+def test_holdings_from_company_doc(tmp_path, monkeypatch):
+    """회사소개서 '보유 인증 및 면허' 절만 읽어 검증 입력에 붙이고, 그 목록 값으로 낸 issue만 충돌로 인정한다."""
+    from backend import config
+    from backend.agents.verify import HOLDINGS, _conflicts, with_holdings
+    from backend.tools.company_docs import holdings
+
+    d = tmp_path / "C900"
+    d.mkdir()
+    (d / "회사소개서.md").write_text("# 소개\n\n1. 회사 개요\n- 2016년 설립\n\n2. 보유 인증 및 면허\n"
+                                    "- 직접생산확인증명서 (행사대행업, 광고대행업)\n- 여성기업확인서\n\n3. 핵심 인력\n- PM 3명\n",
+                                    encoding="utf-8")
+    monkeypatch.setattr(config, "COMPANY_DOCS_DIR", tmp_path)
+    assert holdings({"업체ID": "C900"}) == "직접생산확인증명서 (행사대행업, 광고대행업) / 여성기업확인서"
+    assert holdings({"업체ID": "C999"}) is None  # 문서 없음
+    company = with_holdings({"업체ID": "C900", "소재지": "부산"})
+    assert _conflicts({"company_field": f"company.{HOLDINGS}", "company_value": "직접생산확인증명서 (행사대행업, 광고대행업)"},
+                      company)
+    assert not _conflicts({"company_field": HOLDINGS, "company_value": "동영상제작서비스"}, company)  # 목록에 없는 값
+    assert HOLDINGS not in with_holdings({"업체ID": "C999"})  # 문서가 없으면 면허 요건은 확인 불가(issue 아님)
+
+
 def test_apply_verification_demotes_flagged():
     result = _result(["T1", "T2", "T3"])
     result["items"][0]["issues"] = [_issue()]

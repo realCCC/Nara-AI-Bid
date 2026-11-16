@@ -61,6 +61,7 @@ class SelectIn(BaseModel):
     thread_id: str
     bidNtceNo: str
     checks: list[str] = []  # 담당자가 체크한 체크리스트 항목 id (전부 있어야 선택 확정)
+    notes: dict[str, str] = {}  # 검증 에이전트 자격 문제 항목 id → 담당자가 적은 '해당 없음' 사유 (필수)
 
 
 class ChatIn(BaseModel):
@@ -370,6 +371,12 @@ def select(body: SelectIn):
     missing = [i["id"] for i in made["items"] if i["id"] not in set(body.checks)]
     if missing:
         raise HTTPException(400, f"확인하지 않은 항목이 {len(missing)}개 있습니다.")
+    # 노출 정책: 자격 확인 필요 공고도 선택은 허용하되, 검증 issue마다 '해당 없음' 사유를 적어야 확정한다
+    notes = {k: v.strip() for k, v in body.notes.items() if v and v.strip()}
+    no_reason = [i["id"] for i in made["items"] if i["origin"] == "verify" and i["id"] not in notes]
+    if no_reason:
+        raise HTTPException(400, f"자격 확인 필요 항목 {len(no_reason)}개에 '해당 없음' 사유를 적어 주세요.")
+    made = {**made, "items": [{**i, "note": notes[i["id"]]} if i["origin"] == "verify" else i for i in made["items"]]}
     try:
         with _logged(company, "제안서 초안", "공고 확정 · 초안 작성 시작") as done:
             state = graph.invoke(Command(resume={"bidNtceNo": body.bidNtceNo, "checks": made["items"]}),

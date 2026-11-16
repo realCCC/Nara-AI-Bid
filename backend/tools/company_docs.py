@@ -57,6 +57,28 @@ def vectors(company: dict, chunks: list[dict]):
         return None
 
 
+_HOLDINGS_HEAD = re.compile(r"^\s*(?:#{1,6}\s*|\d+\.\s*)?.*(인증|면허|허가)")
+_SECTION_HEAD = re.compile(r"^\s*(?:#{1,6}\s+|\d+\.\s+)")
+_ITEM = re.compile(r"^\s*[-*•]\s+(.+)")
+
+
+def holdings(company: dict) -> str | None:
+    """회사소개서의 '보유 인증 및 면허' 절 항목을 한 줄로 → 검증 에이전트가 면허·허가·직접생산 요건과 대조한다.
+    절을 못 찾으면 None (그때는 보유 여부를 확인할 수 없는 것으로 본다)."""
+    d = doc_dir(company)
+    if not company.get("업체ID") or not d.is_dir():
+        return None
+    items = []
+    for f in sorted(p for p in d.iterdir() if p.suffix.lower() in (".txt", ".md")):
+        inside = False
+        for line in f.read_text(encoding="utf-8").splitlines():
+            if _SECTION_HEAD.match(line):
+                inside = bool(_HOLDINGS_HEAD.match(line))
+            elif inside and (m := _ITEM.match(line)):
+                items.append(m.group(1).strip())
+    return " / ".join(items) or None
+
+
 def search(chunks: list[dict], query: str, k: int = 4, vecs=None) -> list[dict]:
     """BM25 + dense(vecs가 있으면) RRF 상위 k."""
     from backend.tools.retrieval import hybrid_retrieve

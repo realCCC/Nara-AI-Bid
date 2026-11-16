@@ -23,9 +23,20 @@ from backend.tracing import traced
 QUALIFICATION_K = 6
 _QUAL_SECTION = re.compile(r"자격")  # 섹션 제목 (조항 구조 청킹이 붙임)
 # 참가자격 섹션 밖(입찰방법·계약방법 등)에 적히는 핵심 조건
-_QUAL_TEXT = re.compile(r"지역제한|주된\s*영업소|본점\s*소재지|대기업|중견기업|중소기업\S{0,10}\s*(한정|확인서)|업종코드")
+_QUAL_TEXT = re.compile(r"지역제한|주된\s*영업소|본점\s*소재지|대기업|중견기업|중소기업\S{0,10}\s*(한정|확인서)|업종코드"
+                        r"|직접생산\s*확인|허가를\s*(받|득)")
 # 자격 충돌로 인정하는 업체 항목 (선호계약방식 같은 선호, 프로필에 없는 소기업 여부 등은 issue가 아님)
-CONFLICT_FIELDS = ("소재지", "중소기업여부", "업종", "참여가능금액")
+# 보유면허·인증: 회사소개서의 '보유 인증 및 면허' 목록 (공고서가 요구하는 허가·직접생산 품명이 목록에 없으면 충돌)
+HOLDINGS = "보유면허·인증"
+CONFLICT_FIELDS = ("소재지", "중소기업여부", "업종", "참여가능금액", HOLDINGS)
+
+
+def with_holdings(company: dict) -> dict:
+    """검증 입력용 프로필: 회사소개서에서 보유 면허·인증 목록을 붙인다 (없으면 그대로 — 그때 면허 요건은 issue가 아님)."""
+    from backend.tools.company_docs import holdings
+
+    held = holdings(company)
+    return {**company, HOLDINGS: held} if held else company
 
 
 def qualification_chunks(head: list[dict], by_no: dict[str, dict]) -> dict[str, list[dict]]:
@@ -170,10 +181,10 @@ def verify_recommendations(state: ProposalState, config: RunnableConfig):
         try:
             by_no = tenders(state)
             chunks = qualification_chunks(recs[:n], by_no)
-            result, reason = llm.verify_ranking(with_note(state["company_profile"], state.get("prefs")), recs[:n],
-                                                by_no, chunks)
+            company = with_holdings(state["company_profile"])
+            result, reason = llm.verify_ranking(with_note(company, state.get("prefs")), recs[:n], by_no, chunks)
             if result is not None:
-                result, dropped = confirm_issues(result, by_no, state["company_profile"], chunks)
+                result, dropped = confirm_issues(result, by_no, company, chunks)
         except Exception as e:  # 서브에이전트 예외는 그래프를 멈추지 않는다
             result, reason = None, f"예외: {type(e).__name__}"
     branches, tot = state.get("rag_branches") or [], None

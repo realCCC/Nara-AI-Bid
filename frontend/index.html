@@ -252,6 +252,8 @@
   .rec-top { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
   .rank { width: 40px; height: 40px; border-radius: 10px; background: var(--chip); display: grid; place-items: center; font-family: var(--mono); font-weight: 600; font-size: 17px; flex: 0 0 40px; }
   .rank.top { background: var(--ink); color: var(--on-ink); }
+  .rank.flag { background: var(--warn-soft); color: var(--warn-text); }
+  .flag-note { padding: 14px 18px; font-size: 14px; line-height: 1.6; background: var(--warn-soft); border-color: var(--warn-line); }
   .rec-title { flex: 1 1 360px; min-width: 0; }
   .rec h4 { margin: 0; font-size: 17px; line-height: 1.4; }
   .rec .meta { margin-top: 4px; font-size: 13px; color: var(--sub); }
@@ -367,6 +369,7 @@
   .checklist .cat { font-size: 12px; font-weight: 600; color: var(--faint); }
   .checklist .src { display: block; font-size: 12px; color: var(--faint); margin-top: 4px; }
   .checklist input { width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--ink); flex-shrink: 0; }
+  .checklist input.note { display: block; width: 100%; height: auto; margin: 6px 0 0; padding: 6px 8px; font: inherit; font-size: 13px; color: var(--ink); background: var(--card); border: 1px solid var(--warn-line); border-radius: 8px; }
   .prop-cols { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
   .prop-cols > .sec-card { margin-bottom: 0; }
   .prop-cols .crit { flex: 1 1 360px; min-width: 0; }
@@ -599,7 +602,7 @@
 
       <div class="hidden" id="resultCard" style="margin-top:24px;">
         <div class="row" style="justify-content:space-between; align-items:baseline; gap:8px;">
-          <h2 style="margin:0; font-size:18px;">추천 공고 상위 <span id="topCount">10</span>건</h2>
+          <h2 style="margin:0; font-size:18px;">추천 공고 <span id="topCount">10</span>건<span class="muted" id="flagCount" style="font-size:14px; font-weight:400;"></span></h2>
           <span class="muted">추천은 참고용입니다. 근거를 확인한 뒤 1건을 선택하세요.</span>
         </div>
         <section class="effect" id="effectBox" aria-label="검증 효과"></section>
@@ -1450,10 +1453,15 @@ function renderResults() {
     $("resultCard").classList.add("hidden");
     return;
   }
-  $("topCount").textContent = state.recs.length;
+  // 노출 정책: 검증 에이전트가 출처까지 확인한 자격 문제(issue)가 있는 공고는 추천 건수에 넣지 않고
+  // '자격 확인 필요' 영역에 따로 보인다. 예외(참여 지사 인정 등)가 있을 수 있어 선택은 막지 않고, 확정 전 체크리스트에서 issue를 직접 확인한다
+  const flaggedOf = t => !!t.verify?.issues?.length;
+  const okRecs = state.recs.filter(t => !flaggedOf(t)), flagRecs = state.recs.filter(flaggedOf);
+  $("topCount").textContent = okRecs.length;
+  $("flagCount").textContent = flagRecs.length ? ` · 자격 확인 필요 ${flagRecs.length}건 별도` : "";
   const reranked = state.result?.search?.rerank === "applied";
   if (state.result) renderEffects(state.result, state.recs);
-  list.innerHTML = state.recs.map((t, i) => {
+  const card = (t, i, badge) => {
     const isSel = state.selected === t.bidNtceNo;
     const weak = t.source === "rag" && !t.pdf_evidence;
     const rule = t.rule || { reasons: t.reasons, score_detail: t.score_detail }, L = t.llm, V = t.verify;
@@ -1478,7 +1486,7 @@ function renderResults() {
     return `
     <article class="rec ${isSel ? "selected" : ""}">
       <div class="rec-top">
-        <div class="rank ${i < 3 ? "top" : ""}">${i + 1}</div>
+        <div class="rank ${badge ? "flag" : i < 3 ? "top" : ""}" ${badge ? 'title="자격 확인 필요 · 추천 건수에 넣지 않음"' : ""}>${badge || i + 1}</div>
         <div class="rec-title">
           <h4>${esc(t.bidNtceNm)}</h4>
           ${factsRow(t)}
@@ -1512,7 +1520,15 @@ function renderResults() {
         <button class="btn ${isSel ? "" : "primary"}" data-pick="${esc(t.bidNtceNo)}" ${isSel ? "disabled" : ""}>${isSel ? "선택 완료" : "이 공고 선택"}</button>
       </div>
     </article>`;
-  }).join("");
+  };
+  const none = okRecs.length ? "" : `
+    <div class="panel flag-note"><b>적격으로 확인된 추천 공고가 없습니다.</b>
+      후보 ${flagRecs.length}건 모두 검증 에이전트가 공고서에서 자격 문제를 확인했습니다. 핵심 사업이나 인터뷰 조건을 바꿔 다시 추천해 보세요.</div>`;
+  const flagHead = flagRecs.length ? `
+    <div class="panel flag-note"><b>자격 확인 필요 ${flagRecs.length}건</b> · 추천 건수에 넣지 않았습니다.
+      검증 에이전트가 공고서에서 참가 자격 문제(소재지·중소기업·업종·금액)를 출처와 함께 확인한 공고입니다.
+      참여 지사 인정 같은 예외가 있으면 선택할 수 있고, 확정 전에 체크리스트에서 해당 문제를 직접 확인해야 합니다.</div>` : "";
+  list.innerHTML = none + okRecs.map((t, i) => card(t, i, "")).join("") + flagHead + flagRecs.map((t, i) => card(t, i, "!")).join("");
   list.querySelectorAll("[data-pick]").forEach(b => b.onclick = () => pickTender(b.dataset.pick));
   $("resultCard").classList.remove("hidden");
 }
@@ -1523,8 +1539,9 @@ function renderResults() {
 const ORIGIN_TAG = { ai: '<span class="tag llm">AI · 공고서</span>', field: '<span class="tag gray">공고 정보</span>',
   flag: '<span class="tag warn">AI 확인 사항</span>', verify: '<span class="tag warn">검증 에이전트</span>', common: '<span class="tag gray">공통</span>' };
 const checklistDone = () => {
-  const boxes = [...document.querySelectorAll("#checklist input")];
-  return boxes.length > 0 && boxes.every(i => i.checked);
+  const boxes = [...document.querySelectorAll("#checklist input[type=checkbox]")];
+  const notes = [...document.querySelectorAll("#checklist input.note")];  // 자격 확인 필요 항목은 사유까지 적어야 확정
+  return boxes.length > 0 && boxes.every(i => i.checked) && notes.every(i => i.value.trim());
 };
 async function pickTender(no) {
   state.selected = no;
@@ -1561,15 +1578,18 @@ function renderChecklist(cl) {
         <label class="${x.origin === "flag" || x.origin === "verify" ? "flagged" : ""}"><input type="checkbox" value="${esc(x.id)}">
           <span><span class="cat">${esc(x.category)}</span> ${ORIGIN_TAG[x.origin] || ""}<br>${esc(x.text)}
             ${x.evidence?.quote ? `<span class="quote" style="display:block;">“${esc(x.evidence.quote)}”</span>` : ""}
-            ${x.evidence ? `<span class="src">출처 · ${reasonSrc(x.evidence)}</span>` : ""}</span></label>`).join("")}
+            ${x.evidence ? `<span class="src">출처 · ${reasonSrc(x.evidence)}</span>` : ""}
+            ${x.origin === "verify" ? `<input type="text" class="note" data-note="${esc(x.id)}" maxlength="200"
+              placeholder="자격 확인 필요 · 해당 없음 사유 (예: 참여 지사가 대전 소재)" aria-label="해당 없음 사유">` : ""}</span></label>`).join("")}
       <p class="muted" style="margin:6px 0 0; font-size:12px;">원문과 대조해 모두 체크하면 제안서 초안을 만들 수 있습니다. 체크한 항목은 작업 이력에 저장됩니다.</p>
     </fieldset>`;
   const update = () => {
-    const done = [...document.querySelectorAll("#checklist input")].filter(i => i.checked).length;
+    const done = [...document.querySelectorAll("#checklist input[type=checkbox]")].filter(i => i.checked).length;
     $("checkCount").textContent = `${done} / ${n}`;
     $("toProposalBtn").disabled = !checklistDone();
   };
-  document.querySelectorAll("#checklist input").forEach(i => i.onchange = update);
+  document.querySelectorAll("#checklist input[type=checkbox]").forEach(i => i.onchange = update);
+  document.querySelectorAll("#checklist input.note").forEach(i => i.oninput = update);
   update();
 }
 
@@ -1581,9 +1601,10 @@ $("toProposalBtn").onclick = async () => {
   try {
     // 이미 초안을 만든 작업이면(그래프 종료) 같은 조건으로 새 작업을 만든 뒤 재개
     if (state.done) { const sel = state.selected; await runRecommend(); state.selected = sel; }
-    const checks = [...document.querySelectorAll("#checklist input:checked")].map(i => i.value);
+    const checks = [...document.querySelectorAll("#checklist input[type=checkbox]:checked")].map(i => i.value);
+    const notes = Object.fromEntries([...document.querySelectorAll("#checklist input.note")].map(i => [i.dataset.note, i.value.trim()]));
     const r = await api("/api/select", { method: "POST",
-      body: JSON.stringify({ token: session.token, thread_id: state.threadId, bidNtceNo: state.selected, checks }) });
+      body: JSON.stringify({ token: session.token, thread_id: state.threadId, bidNtceNo: state.selected, checks, notes }) });
     state.done = true;
     renderProposal(r);
     enableTab("proposal");

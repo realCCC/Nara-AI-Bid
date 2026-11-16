@@ -145,7 +145,7 @@
   {%- for c in checks %}
     <tr>
       <td>{{ c.category }}</td>
-      <td>{{ c.text }}</td>
+      <td>{{ c.text }}{% if c.note %}<br>담당자 사유: {{ c.note }}{% endif %}</td>
       <td>{% if c.evidence and c.evidence.source_type == "pdf" %}PDF · {{ c.evidence.file }} p.{{ c.evidence.page }}{% elif c.evidence and c.evidence.field %}필드 · {{ c.evidence.field }}{% else %}-{% endif %}</td>
     </tr>
   {%- endfor %}
