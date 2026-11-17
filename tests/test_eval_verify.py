@@ -19,5 +19,5 @@ def test_company_metrics_and_summary():
     assert m["ndcg_after"] == 1.0 > m["ndcg_before"]
     s = summarize([m, company_metrics(["A", "C", "B"], ["A", "C", "B"], set(), GOLD)])
     assert s["부적격 하위 배치율"] == {"before": 0.5, "after": 1.0}
-    assert s["플래그 정밀도"] == 1.0 and s["플래그 재현율"] == 0.5
+    assert s["플래그 정밀도"] == 1.0 and s["플래그 재현율"] == 0.5 and s["플래그 F1"] == 0.667
     assert s["순위 변경률"] == 0.5

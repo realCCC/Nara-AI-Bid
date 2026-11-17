@@ -86,6 +86,8 @@ def summarize(rows: list[dict]) -> dict:
                              "after": ratio(total("below_after"), total("pairs"))},
             "플래그 정밀도": ratio(total("flagged_bad"), total("flagged")),
             "플래그 재현율": ratio(total("flagged_bad"), total("bad")),
+            # F1 = 2PR/(P+R) = 2TP/(플래그 수 + 부적격 수). 반올림 전 건수로 계산
+            "플래그 F1": ratio(2 * total("flagged_bad"), total("flagged") + total("bad")),
             "순위 변경률": ratio(sum(r["changed"] for r in rows), len(rows))}
 
 
