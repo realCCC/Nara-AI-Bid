@@ -10,7 +10,7 @@ data/pdfs/
 data/chroma/
 data/app.db
 outputs/
-# 임베딩 캐시(data/emb_cache.npz 공고 벡터)는 커밋한다. 공고서 청크 벡터는 pgvector(Docker 볼륨)에만 있음
+# 벡터(공고 문서·공고서 청크)는 모두 pgvector(Docker 볼륨)에만 있음. 파일 벡터 캐시는 쓰지 않는다
 # → 다른 PC에서 공고 벡터를 다시 계산하지 않음 (청킹이나 EMBEDDING_MODEL이 바뀌면 다시 계산됨)
 
 # Claude Code 프로젝트 지침 (로컬 전용)

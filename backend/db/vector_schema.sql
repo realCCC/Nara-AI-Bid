@@ -3,7 +3,7 @@ CREATE TABLE IF NOT EXISTS tender_chunks (
     id          BIGSERIAL PRIMARY KEY,
     bid_ntce_no TEXT NOT NULL,         -- 공고번호
     model       TEXT NOT NULL,         -- 임베딩 모델 (모델이 바뀌면 이전 벡터와 섞이지 않게)
-    text_hash   TEXT NOT NULL,         -- sha1(모델 + search_text), npz 캐시 키와 같음
+    text_hash   TEXT NOT NULL,         -- sha1(모델 + search_text)
     file        TEXT,
     page        INTEGER,
     pages       INTEGER[],
@@ -18,3 +18,14 @@ CREATE TABLE IF NOT EXISTS tender_chunks (
 -- 코사인 거리(<=>) 근사 최근접 검색
 CREATE INDEX IF NOT EXISTS tender_chunks_embedding_idx ON tender_chunks USING hnsw (embedding vector_cosine_ops);
 CREATE INDEX IF NOT EXISTS tender_chunks_section_idx ON tender_chunks (section);
+
+-- 1단계 공고 검색용 공고 문서 벡터 (공고명·분류·기관 문장). 같은 문장은 한 번만 임베딩해 저장하고, 유사도는 DB 안에서 계산한다
+CREATE TABLE IF NOT EXISTS tender_docs (
+    model       TEXT NOT NULL,         -- 임베딩 모델
+    text_hash   TEXT NOT NULL,         -- sha1(모델 + 문장)
+    text        TEXT NOT NULL,         -- 임베딩한 문장
+    embedding   vector(1024) NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (model, text_hash)
+);
+CREATE INDEX IF NOT EXISTS tender_docs_embedding_idx ON tender_docs USING hnsw (embedding vector_cosine_ops);

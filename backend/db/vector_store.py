@@ -1,4 +1,5 @@
-"""pgvector 청크 벡터 저장소: 공고서 PDF 청크 벡터 + 메타데이터(공고번호·파일·페이지·섹션·원문).
+"""pgvector 벡터 저장소: 공고서 PDF 청크 벡터 + 메타데이터(공고번호·파일·페이지·섹션·원문),
+1단계 공고 검색용 공고 문서 벡터(tender_docs).
 
 DB는 docker compose up -d 로 띄운다 (uv sync --extra rag 필요).
 연결·설치 실패는 예외 → 호출부(retrieval)가 BM25(키워드)만으로 검색한다.
@@ -79,6 +80,30 @@ def tender_scores(query_vec, tender_nos: list[str], top: int = 3) -> dict[str, f
         (query_vec, query_vec, config.EMBEDDING_MODEL, list(tender_nos), top)).fetchall()
     activity.note("벡터DB", f"본문 점수 조회 · 공고 {len(tender_nos)}건 중 {len(rows)}건")
     return {no: float(s) for no, s in rows}
+
+
+def missing_docs(keys: list[str]) -> set[str]:
+    """tender_docs에 아직 없는 문장 해시."""
+    rows = _conn().execute("SELECT text_hash FROM tender_docs WHERE model = %s AND text_hash = ANY(%s)",
+                           (config.EMBEDDING_MODEL, list(set(keys)))).fetchall()
+    return set(keys) - {r[0] for r in rows}
+
+
+def save_docs(rows: list[tuple[str, str, object]]):
+    """rows(text_hash, 문장, 벡터)를 tender_docs에 넣는다."""
+    with _conn().cursor() as cur:
+        cur.executemany("INSERT INTO tender_docs (model, text_hash, text, embedding) VALUES (%s, %s, %s, %s)"
+                        " ON CONFLICT (model, text_hash) DO NOTHING",
+                        [(config.EMBEDDING_MODEL, k, t, v) for k, t, v in rows])
+    activity.note("벡터DB", f"저장 · 공고 문서 벡터 {len(rows)}개")
+
+
+def doc_scores(query_vec, keys: list[str]) -> dict[str, float]:
+    """질의 ↔ 공고 문서 코사인 유사도 {text_hash: 점수}. 벡터를 가져오지 않고 DB 안에서 계산한다."""
+    rows = _conn().execute(
+        "SELECT text_hash, 1 - (embedding <=> %s) FROM tender_docs WHERE model = %s AND text_hash = ANY(%s)",
+        (query_vec, config.EMBEDDING_MODEL, list(set(keys)))).fetchall()
+    return {k: float(s) for k, s in rows}
 
 
 def search(query_vec, k: int = 5, tender_no: str | None = None, section: str | None = None) -> list[dict]:

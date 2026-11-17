@@ -253,11 +253,16 @@ def test_embedding_failure_falls_back(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _isolated_vec_cache(monkeypatch, tmp_path):
-    """가짜 벡터가 실제 디스크 캐시(data/emb_cache.npz)에 섞이지 않게."""
-    monkeypatch.setattr(config, "EMB_CACHE", tmp_path / "emb.npz")
-    monkeypatch.setattr(search, "_DISK_LOADED", True)
-    monkeypatch.setattr(search, "_VEC_CACHE", {})
+def _fake_doc_store(monkeypatch):
+    """pgvector tender_docs 대신 메모리 dict (DB 없이 공고 검색 로직만 시험). {해시: 벡터}."""
+    from backend.db import vector_store
+
+    db = {}
+    monkeypatch.setattr(vector_store, "missing_docs", lambda keys: set(keys) - set(db))
+    monkeypatch.setattr(vector_store, "save_docs", lambda rows: db.update({k: np.asarray(v) for k, _, v in rows}))
+    monkeypatch.setattr(vector_store, "doc_scores",
+                        lambda q, keys: {k: float(db[k] @ np.asarray(q)) for k in keys if k in db})
+    return db
 
 
 class _FakeModel:
@@ -360,7 +365,6 @@ def test_chunk_search_hybrid_caches_per_tender(monkeypatch, fake_store):
 def test_retrieve_reuses_saved_chunk_vectors(monkeypatch, fake_store):
     """검증·체크리스트·평가항목의 retrieve(tender_no=...)는 RAG가 저장한 청크 벡터를 다시 쓴다."""
     import backend.tools.retrieval as retrieval
-    from backend.tools import search
 
     calls = []
 
@@ -370,7 +374,6 @@ def test_retrieve_reuses_saved_chunk_vectors(monkeypatch, fake_store):
             return super().encode(texts, **kw)
 
     monkeypatch.setattr(retrieval, "_bge", lambda: Model())
-    monkeypatch.setattr(search, "_VEC_CACHE", {})
     retrieval.chunk_vectors("T1", CHUNKS)  # RAG 단계가 저장
     calls.clear()
     out = retrieval.retrieve(CHUNKS, "입찰 참가자격", k=2, tender_no="T1")
@@ -646,7 +649,7 @@ def test_synonyms_count_once_in_s2(monkeypatch):
 def test_keyword_similarity_uses_profile_texts(monkeypatch):
     seen = []
     monkeypatch.setattr(config, "EMBEDDING_PROVIDER", "bge")
-    monkeypatch.setattr(search, "embed", lambda texts, persist=False: seen.append(list(texts)) or np.ones((len(texts), 2)))
+    monkeypatch.setattr(search, "embed", lambda texts: seen.append(list(texts)) or np.ones((len(texts), 2)))
     search.keyword_similarity(["교육", "AI"], {"A": "a"}, texts={"교육": "교육: 교원 연수"})
     assert seen[0] == ["교육: 교원 연수", "AI"]
 

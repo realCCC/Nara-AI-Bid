@@ -1,6 +1,7 @@
-"""추천 검색 (인메모리, ES 미사용): 업체 → 검색 문장 → BGE-M3(dense) + BM25(kiwipiepy) → RRF(k=60) → 상위 15건 리랭크.
+"""추천 검색 (ES 미사용): 업체 → 검색 문장 → 임베딩(dense, pgvector) + BM25(kiwipiepy) → RRF(k=60) → 상위 15건 리랭크.
 
-실행경로: semantic(dense+BM25) / keyword_fallback(BM25만 — 임베딩 미설치·실패·EMBEDDING_PROVIDER=keyword).
+공고 문서 벡터는 pgvector(tender_docs)에 저장하고 질의와의 유사도도 DB 안에서 계산한다 (메모리·파일 벡터 캐시 없음).
+실행경로: semantic(dense+BM25) / keyword_fallback(BM25만 — 임베딩 미설치·실패·EMBEDDING_PROVIDER=keyword·DB 미기동).
 리랭커(bge-reranker-v2-m3)는 semantic 경로에서만 시도하고, 실패하면 생략한다.
 BODY_SEARCH=1이면 semantic 경로에서 PDF 본문 순위(pgvector 청크)도 RRF에 넣는다.
 """
@@ -96,63 +97,53 @@ class BM25Retriever:
         return sorted(out, key=lambda x: (-x[1], x[0]))
 
 
-_VEC_CACHE: dict[str, object] = {}  # 문장 해시 → 벡터. 공고 문서 벡터는 EMB_CACHE 파일로도 저장
-_DISK_LOADED = False
-
-
 def _key(text: str) -> str:
     return hashlib.sha1(f"{config.EMBEDDING_MODEL}\0{text}".encode("utf-8")).hexdigest()
 
 
-def _load_disk_cache():
-    global _DISK_LOADED
-    if _DISK_LOADED:
-        return
-    _DISK_LOADED = True
-    try:
-        import numpy as np
-
-        if config.EMB_CACHE.exists():
-            with np.load(config.EMB_CACHE) as z:
-                _VEC_CACHE.update({k: z[k] for k in z.files})
-    except Exception as e:  # 캐시가 깨졌으면 새로 계산
-        log.warning("임베딩 캐시 로드 실패: %s", e)
-
-
-def embed(texts: list[str], persist: bool = False):
-    """정규화 벡터 (행렬). EMBEDDING_PROVIDER=bge(sentence-transformers 설치) 또는 azure(LLM 키) 필요 (아니면 예외).
-    persist=True(공고 문서)면 새로 계산한 벡터를 EMB_CACHE에 저장한다."""
-    import numpy as np
-
+def embed(texts: list[str]):
+    """정규화 벡터 (행렬). 매번 새로 계산한다 (벡터 캐시 없음).
+    EMBEDDING_PROVIDER=bge(sentence-transformers 설치) 또는 azure(LLM 키) 필요 (아니면 예외)."""
     if not config.embedding_enabled():
         raise RuntimeError(f"EMBEDDING_PROVIDER={config.EMBEDDING_PROVIDER}")
     from backend.tools.retrieval import encode
 
-    _load_disk_cache()
+    return encode(list(texts))
+
+
+def store_docs(texts: list[str]) -> list[str]:
+    """공고 문서 문장을 pgvector(tender_docs)에 넣는다 (없는 것만 임베딩) → 문장별 해시.
+    임베딩·DB를 못 쓰면 예외 → 호출부가 BM25·문자열 일치로 대체."""
+    if not config.embedding_enabled():
+        raise RuntimeError(f"EMBEDDING_PROVIDER={config.EMBEDDING_PROVIDER}")
+    from backend.db import vector_store
+
     keys = [_key(t) for t in texts]
-    todo = list(dict.fromkeys((k, t) for k, t in zip(keys, texts) if k not in _VEC_CACHE))
-    if todo:
-        vecs = encode([t for _, t in todo])
-        for (k, _), v in zip(todo, vecs):
-            _VEC_CACHE[k] = v
-        if persist:
-            try:
-                config.EMB_CACHE.parent.mkdir(parents=True, exist_ok=True)
-                np.savez(config.EMB_CACHE, **_VEC_CACHE)
-            except Exception as e:
-                log.warning("임베딩 캐시 저장 실패: %s", e)
-    return np.array([_VEC_CACHE[k] for k in keys])
+    missing = vector_store.missing_docs(keys)
+    if missing:
+        todo = list(dict.fromkeys((k, t) for k, t in zip(keys, texts) if k in missing))
+        vecs = embed([t for _, t in todo])
+        vector_store.save_docs([(k, t, v) for (k, t), v in zip(todo, vecs)])
+    return keys
+
+
+def doc_scores(query_vec, keys: list[str]) -> list[float]:
+    """질의 벡터 ↔ 공고 문서(해시 목록) 코사인, keys 순서대로. 계산은 pgvector 안에서."""
+    from backend.db import vector_store
+
+    s = vector_store.doc_scores(query_vec, keys)
+    return [s.get(k, 0.0) for k in keys]
 
 
 class DenseRetriever:
-    """BGE-M3 코사인 유사도 (생성 시 임베딩 실패하면 예외 → 호출부가 keyword_fallback)."""
+    """공고 문서 ↔ 검색 문장 코사인 유사도 (pgvector). 임베딩·DB 실패하면 예외 → 호출부가 keyword_fallback."""
 
     def __init__(self, docs: dict[str, str]):
         self.ids = list(docs)
-        self.vecs = embed([docs[i] for i in self.ids], persist=True)
+        self.keys = store_docs([docs[i] for i in self.ids])
 
     def search(self, query: str) -> list[tuple[str, float]]:
-        scores = (self.vecs @ embed([query])[0]).tolist()
+        scores = doc_scores(embed([query])[0], self.keys)
         return sorted(((i, round(s, 4)) for i, s in zip(self.ids, scores)), key=lambda x: (-x[1], x[0]))
 
 
@@ -169,8 +160,11 @@ def keyword_similarity(keywords: list[str], docs: dict[str, str], corpus: list[s
         return None, "키워드·후보 없음"
     try:
         kv = embed([(texts or {}).get(k, k) for k in keywords])
-        sims = embed(list(docs.values()), persist=True) @ kv.T
-        ref = embed(corpus, persist=True) @ kv.T if corpus else sims
+        doc_keys = store_docs(list(docs.values()))
+        ref_keys = store_docs(corpus) if corpus else None
+        # 키워드마다 pgvector에서 공고 문서 코사인을 받아 (문서 × 키워드) 행렬로
+        sims = np.array([doc_scores(v, doc_keys) for v in kv]).T
+        ref = np.array([doc_scores(v, ref_keys) for v in kv]).T if ref_keys else sims
     except Exception as e:
         return None, f"임베딩 미사용: {e}"
     top = min(3, len(keywords))
