@@ -15,3 +15,6 @@ outputs/
 
 # Claude Code 프로젝트 지침 (로컬 전용)
 .claude/CLAUDE.md
+
+# 프로젝트 문서(docs/)는 로컬에만 둔다
+docs/
