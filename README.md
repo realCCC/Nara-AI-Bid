@@ -24,10 +24,11 @@
 | 추천 | 근거 출처 확인 비율 | 95% 이상 | 화면 근거 100% | 달성 |
 | 업무 | 공고 탐색·검토 시간 | 50% 이상 단축 | 2.5~5시간 → 약 35~60분, 60~88% 단축 (시스템 실측 + 사람 확인 시간 추정) | 달성 |
 | 제안서 | 업체 프로필·문서·공고서에 없는 사실 기재 | 0건 | 0건 (초안 3건, AI 대조 + 담당자 확인) | 달성 |
+| 보조 | 자격 검증 F1 | 목표 없음 | 0.91 (정밀도 0.93 · 재현율 0.90, 11/17 `eval_verify.py` 3회 평균) | 참고 지표 |
 
 추천 KPI는 정답셋 50건(업체 10곳 × 상위 5건)에 현재 검증 코드를 3회 적용한 평균입니다. 정답셋은 담당자가 확인한 뒤, AI가 회사소개서의 면허·직접생산 목록과 공고서 자격 조항을 다시 대조해 6건을 부적격으로 고쳤습니다. 측정 기준과 버전별 수치는 [7번 문서](docs/7.E2E서비스개발.md) 2·3절에 있습니다.
 
-단계별로 따로 잰 수치도 있습니다. 검증 에이전트는 같은 정답셋에서 부적격 공고를 아래로 내리는 비율이 0.765에서 0.981이 됐고, 플래그 정밀도와 재현율은 0.93, 0.88입니다. 회사소개서의 보유 면허 목록을 검증에 넣기 전에는 재현율이 0.70이었습니다. 평가 방법은 [6번 문서](docs/6.테스트및고도화.md) 1-5절에 있습니다. 검색은 LangSmith 트레이스로 실패 원인을 찾아 고친 뒤 nDCG@10이 0.870에서 0.892로, P@10이 0.93에서 0.95로 올랐습니다.
+단계별로 따로 잰 수치도 있습니다. 검증 에이전트는 같은 정답셋에서 부적격 공고를 아래로 내리는 비율이 0.765에서 0.981이 됐고, 플래그 정밀도와 재현율은 0.93, 0.88입니다. 둘의 조화평균인 F1은 11/17에 평가 스크립트로 3회 다시 잰 평균이 0.91입니다(그때 정밀도 0.93, 재현율 0.90). F1은 최종 정리 때 추가한 보조 지표라 목표를 두지 않았고, 추천 순위는 라벨이 상위 5건에만 있어 재현율을 정의할 수 없으므로 검증 단계에만 씁니다. 회사소개서의 보유 면허 목록을 검증에 넣기 전에는 재현율이 0.70이었습니다. 평가 방법은 [6번 문서](docs/6.테스트및고도화.md) 1-5절에 있습니다. 검색은 LangSmith 트레이스로 실패 원인을 찾아 고친 뒤 nDCG@10이 0.870에서 0.892로, P@10이 0.93에서 0.95로 올랐습니다.
 
 ## 추천 흐름
 
@@ -59,11 +60,11 @@ LangGraph 그래프 하나(`backend/graphs/proposal.py`)를 규칙 기반 Superv
 
 | 구분 | 기술 |
 |---|---|
-| LLM | Azure OpenAI (structured output). `AZURE_OPENAI_CHAT_DEPLOYMENT`에 넣은 배포를 쓴다. 측정은 gpt-5.4로 했고 `.env.example` 기본값은 gpt-4.1 |
+| LLM | Azure OpenAI (structured output). `AZURE_OPENAI_CHAT_DEPLOYMENT`에 넣은 배포를 쓴다. 측정은 gpt-5.4로 했고 `.env.example` 기본값은 gpt-4.1. gpt-6.1-sol과 비교해 gpt-5.4를 유지했다(검증 플래그 정밀도 0.944 vs 0.773, 약 2.7배 빠름). gpt-6 계열 추론 모델은 temperature를 거부하므로 `LLM_TEMPERATURE`를 비워 둔다 |
 | Agent | LangGraph, LangChain, LangSmith 추적. ToT(순위안 비교), Self-Correction(자체 점검과 비평 재순위) |
-| MCP | MCP Python SDK 2.x (`MCPServer`, stdio). 추천, 자격 확인, 근거 검색을 외부 AI 클라이언트에서 쓸 수 있게 도구로 연다 |
+| MCP | MCP Python SDK 2.x (`MCPServer`, stdio). 자격 판정, 공고서 요건 추출, 인용 원문 대조를 외부 AI 클라이언트용 도구 3개로 연다 |
 | 검색 | BM25(kiwipiepy), 임베딩(Azure text-embedding-3-large 1024차원 또는 로컬 BGE-M3), RRF, bge-reranker-v2-m3 |
-| 벡터 DB | PostgreSQL 16 + pgvector(Docker). 공고서·업체 문서 청크를 HNSW로 저장한다. 공고 검색 벡터는 DB 대신 메모리와 `emb_cache.npz` 캐시에 둔다 |
+| 벡터 DB | PostgreSQL 16 + pgvector(Docker). 1단계 공고 검색용 공고 문서 벡터(`tender_docs`)와 공고서·업체 문서 청크 벡터(`tender_chunks`)를 HNSW로 저장한다. 공고 검색 유사도도 DB 안에서 계산하고, 메모리·파일 벡터 캐시는 쓰지 않는다 |
 | PDF | PyMuPDF, 조항 구조 기준 300~800자 청킹 |
 | 서버·DB | FastAPI, Jinja2, SSE, SQLite(업체·이력) |
 | 프론트 | 단일 HTML (`frontend/index.html`) |
@@ -83,7 +84,7 @@ LangGraph 그래프 하나(`backend/graphs/proposal.py`)를 규칙 기반 Superv
 ```
 backend/
   server.py     FastAPI (화면·API·실행 로그·추천 진행·제안서 대화 SSE)
-  mcp_server.py MCP 서버 (도구 6개)
+  mcp_server.py MCP 서버 (도구 3개)
   graphs/       Supervisor 전체 그래프, 추천 Worker 서브그래프
   agents/       interview · rag · verify · selection · draft · state
   tools/        interview · keyword_profile · rules · search · retrieval · pdf · evidence · checklist · llm
@@ -94,7 +95,7 @@ frontend/       index.html
 scripts/        run_demo · seed_companies · check_env · validate_data · warm_chunk_vectors
                 eval_verify · eval_body · eval_search · diagnose
 tests/          pytest
-data/           공고·업체·업체 문서·평가셋·공고 벡터 캐시(emb_cache.npz)·검색 문장 캐시(query_cache.json)
+data/           공고·업체·업체 문서·평가셋·검색 문장 캐시(query_cache.json)
 assets/         데모 GIF, 화면 캡처
 docs/           단계별 문서 1~7
 ```
@@ -115,7 +116,7 @@ uv run pytest                                  # 테스트 (실제 LLM 호출 �
 
 `EMBEDDING_PROVIDER`는 `keyword`(기본), `azure`(임베딩 API), `bge`(로컬, `--extra rag` 필요) 중에서 고릅니다. 리랭크는 `azure`나 `bge`일 때만 시도하고, `--extra rag`가 없거나 실패하면 건너뜁니다.
 
-벡터 DB에 연결하지 못해도 추천은 그대로 진행됩니다. 청크 검색만 BM25·키워드로 하고, 30초마다 다시 연결을 시도합니다.
+벡터 DB에 연결하지 못해도 추천은 그대로 진행됩니다. 공고 검색은 BM25·룰 순위로, 청크 검색은 BM25·키워드로 하고, 30초마다 다시 연결을 시도합니다. 의미 검색을 쓰려면 Docker를 켜 두어야 합니다. 공고 문서 벡터는 첫 검색 때 없는 것만 계산해 DB에 넣습니다.
 
 로그인한 뒤 오른쪽 위 [로그 확인]을 누르면 실행 로그 팝업이 뜹니다. 주요 기능과 LLM·RAG·벡터 DB·임베딩·리랭크 호출이 2초 간격으로 올라오고, 룰·BM25로 넘어간 단계는 `대체`, 실패한 단계는 `오류`로 표시됩니다. 서버 메모리에 최근 300줄만 들고 있어서 재시작하면 지워집니다.
 
@@ -130,7 +131,7 @@ uv run pytest                                  # 테스트 (실제 LLM 호출 �
 
 ## MCP 서버
 
-웹 화면이 쓰는 추천·규칙·검색 함수를 MCP 도구로 열어 두었습니다. Claude Desktop 같은 MCP 클라이언트에 등록하면 "C003 업체가 넣을 만한 공고 찾아줘", "이 공고 참가 자격 돼?"처럼 대화로 부를 수 있습니다. 판단과 요약은 클라이언트 쪽 LLM이 하고, 이 서버는 공고 데이터와 규칙·검색 결과만 돌려줍니다.
+웹 화면이 쓰는 자격 규칙, 조항 청킹, 원문 대조 함수를 MCP 도구 3개로 열어 두었습니다. 등록된 업체ID가 아니라 호출하는 쪽의 업체 프로필이나 공고서 PDF를 그대로 받기 때문에, 이 프로젝트 데이터 밖에서도 쓸 수 있습니다. Claude Desktop 같은 MCP 클라이언트에 등록하면 "이 공고서에서 참가 자격 뽑아줘", "제안서에 쓴 이 문장이 공고서에 진짜 있어?"처럼 대화로 부를 수 있습니다. 판단과 요약은 클라이언트 쪽 LLM이 합니다.
 
 ```powershell
 uv sync --extra mcp                                # rag도 쓰려면 uv sync --extra rag --extra mcp
@@ -139,12 +140,9 @@ uv run --extra mcp python -m backend.mcp_server    # stdio 서버
 
 | 도구 | 하는 일 |
 |---|---|
-| `list_companies` | 등록된 업체 목록 |
-| `recommend_tenders(company_id, top_k)` | 자격 필터, 의미 검색, 리랭크를 거친 상위 공고. LLM 순위와 검증 전 단계까지 |
-| `check_qualification(company_id, tender_no)` | 규칙 H1~H6 통과 여부와 걸린 사유 |
-| `get_tender(tender_no)` | 공고 상세 |
-| `search_evidence(tender_no, query, k)` | 공고서 PDF에서 관련 조항 청크(파일, 페이지, 원문) |
-| `get_checklist(tender_no)` | 입찰 전 확인 체크리스트 |
+| `check_eligibility(company, tender_no)` | 넘겨받은 업체 프로필(소재지, 중소기업 여부, 업종, 참여 가능 금액)로 공고의 규칙 H1~H6 통과 여부와 걸린 사유를 판정. 공고는 2026-05 나라장터 스냅샷 기준 |
+| `extract_requirements(pdf)` | 공고서 PDF(경로 또는 URL)에서 참가자격·실적·제출서류·일정을 쪽수와 원문 인용과 함께 추출. 인용이 원문에 없는 항목은 버림. LLM이 없으면 관련 조항 원문만 |
+| `verify_quote(quote, pdf, page)` | 인용문이 공고서 원문에 있는지 공백을 무시하고 대조. 줄임표로 줄인 인용은 조각이 같은 조항에 있어야 통과. 다른 AI가 쓴 제안서·요약의 환각 검사용 |
 
 Claude Desktop 설정(`claude_desktop_config.json`)은 이렇게 넣으면 됩니다.
 
